@@ -150,7 +150,8 @@ function Battle({ id }: { id: string }) {
   const advantage =
     myTurn && myFront !== null && targetCard !== null ? advantageText(myFront.element, targetCard.element) : null;
   const blocksLeft = match ? turnBlocksLeft(match, state.block) : 0;
-  const clock = match?.status === 'Active' ? `${blocksLeft} blk` : '—';
+  // Monad blocks are ~0.3 s; players read seconds, not blocks.
+  const clock = match?.status === 'Active' ? `${Math.ceil(blocksLeft * 0.3)}s` : '—';
   const isAgent =
     side !== null &&
     match !== null &&
