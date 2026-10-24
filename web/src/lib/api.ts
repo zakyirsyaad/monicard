@@ -43,7 +43,14 @@ export const RELAY_TIMEOUT_MS = 5000;
 
 type AgentRefusal = Extract<AgentChallengeResult, { ok: false }>['reason'];
 
-const AGENT_REFUSALS = new Set([409, 429]);
+const AGENT_REFUSAL_STATUSES = new Set([409, 429]);
+const AGENT_REFUSAL_REASONS: ReadonlySet<string> = new Set([
+  'busy',
+  'reserved',
+  'not_open',
+  'stale',
+  'limit_ip',
+]);
 
 type Raw = { status: number; ok: boolean; body: unknown };
 
@@ -124,10 +131,11 @@ export function createHttpApi(
     async challengeAgent(duelId: string): Promise<AgentChallengeResult> {
       const raw = await send('/agent/challenge', postJson({ duelId }));
       if (raw.ok) return { ok: true };
-      if (AGENT_REFUSALS.has(raw.status)) {
-        return { ok: false, reason: reasonOf(raw) as AgentRefusal };
+      const reason = reasonOf(raw);
+      if (AGENT_REFUSAL_STATUSES.has(raw.status) && AGENT_REFUSAL_REASONS.has(reason)) {
+        return { ok: false, reason: reason as AgentRefusal };
       }
-      throw new ApiError(raw.status, reasonOf(raw));
+      throw new ApiError(raw.status, reason);
     },
   };
 }

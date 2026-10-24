@@ -48,15 +48,15 @@ export type RelayResult = {
 };
 
 export type NadgachaCard = {
-  id: string;
+  id: number;
   atk: number;
   hp: number;
-  element: string;
-  rarity: string;
+  element: number;
+  rarity: number;
   wins: number;
   losses: number;
   mintedAt: number;
-  nadmon: { id: string; name: string; stage: number };
+  nadmon: { id: string; name: string; stage: 1 | 2 | 3 };
   title: string;
   lore: string;
   status: 'ready' | 'forging';

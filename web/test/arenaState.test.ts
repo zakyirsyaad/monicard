@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { initialArenaState, nextBackoff, reduceArena } from '../src/lib/arenaState';
+import { initialArenaState, nextBackoff, parseWsMessage, reduceArena } from '../src/lib/arenaState';
 import type { AgentMsg, DuelView, StatsMsg, WsMessage } from '../src/lib/types';
 
 const A = '0x1111111111111111111111111111111111111111' as const;
@@ -155,5 +155,34 @@ describe('nextBackoff', () => {
       seq.push(prev);
     }
     expect(seq).toEqual([500, 1000, 2000, 4000, 8000, 8000]);
+  });
+});
+
+describe('parseWsMessage', () => {
+  const j = (v: unknown) => JSON.stringify(v);
+
+  it('accepts well-formed messages', () => {
+    expect(parseWsMessage(j({ type: 'duels', block: '5', duels: [], featuredId: null }))).not.toBeNull();
+    expect(parseWsMessage(j({ type: 'stats', block: '5' }))).not.toBeNull();
+    expect(parseWsMessage(j({ type: 'leaderboard', entries: [] }))).not.toBeNull();
+    expect(parseWsMessage(j({ type: 'agent', lessons: [] }))).not.toBeNull();
+    expect(parseWsMessage(j({ type: 'taunt', duelId: '1', text: 'x' }))).not.toBeNull();
+  });
+
+  it('rejects malformed JSON, non-strings and unknown types', () => {
+    expect(parseWsMessage('{nope')).toBeNull();
+    expect(parseWsMessage(42)).toBeNull();
+    expect(parseWsMessage(j({ type: 'mystery' }))).toBeNull();
+    expect(parseWsMessage(j(null))).toBeNull();
+  });
+
+  it('rejects messages with a bad shape', () => {
+    expect(parseWsMessage(j({ type: 'duels', block: '5' }))).toBeNull();
+    expect(parseWsMessage(j({ type: 'duels', block: 5, duels: [] }))).toBeNull();
+    expect(parseWsMessage(j({ type: 'stats', block: 5 }))).toBeNull();
+    expect(parseWsMessage(j({ type: 'leaderboard' }))).toBeNull();
+    expect(parseWsMessage(j({ type: 'agent' }))).toBeNull();
+    expect(parseWsMessage(j({ type: 'taunt', duelId: 1, text: 'x' }))).toBeNull();
+    expect(parseWsMessage(j({ type: 'taunt', duelId: '1' }))).toBeNull();
   });
 });

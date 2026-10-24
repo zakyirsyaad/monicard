@@ -78,16 +78,30 @@ export function reduceArena(state: ArenaState, msg: WsMessage, now: number): Are
   }
 }
 
-const MESSAGE_TYPES = new Set(['duels', 'stats', 'leaderboard', 'agent', 'taunt']);
+type Loose = Record<string, unknown>;
 
-/** Parse a raw socket payload; null for malformed JSON or unknown message types. */
+const isStr = (v: unknown): v is string => typeof v === 'string';
+
+/** Cheap per-type shape guards; deeper fields are trusted (server is ours). */
+const SHAPE_GUARDS: Record<WsMessage['type'], (m: Loose) => boolean> = {
+  duels: (m) => Array.isArray(m.duels) && isStr(m.block),
+  stats: (m) => isStr(m.block),
+  leaderboard: (m) => Array.isArray(m.entries),
+  agent: (m) => Array.isArray(m.lessons),
+  taunt: (m) => isStr(m.duelId) && isStr(m.text),
+};
+
+/** Parse a raw socket payload; null for malformed JSON, unknown types or bad shapes. */
 export function parseWsMessage(data: unknown): WsMessage | null {
-  if (typeof data !== 'string') return null;
+  if (!isStr(data)) return null;
   try {
     const parsed: unknown = JSON.parse(data);
     if (!parsed || typeof parsed !== 'object') return null;
-    const type = (parsed as { type?: unknown }).type;
-    return typeof type === 'string' && MESSAGE_TYPES.has(type) ? (parsed as WsMessage) : null;
+    const m = parsed as Loose;
+    const guard = isStr(m.type) && Object.hasOwn(SHAPE_GUARDS, m.type)
+      ? SHAPE_GUARDS[m.type as WsMessage['type']]
+      : undefined;
+    return guard?.(m) ? (parsed as WsMessage) : null;
   } catch {
     return null;
   }

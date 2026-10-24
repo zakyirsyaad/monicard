@@ -109,6 +109,22 @@ describe('createHttpApi endpoints', () => {
     });
   });
 
+  it('challengeAgent throws ApiError for an unknown 409 reason', async () => {
+    const { fn } = fakeFetch(() => json({ reason: 'weird' }, 409));
+    const err = await createHttpApi('', fn)
+      .challengeAgent('5')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).reason).toBe('weird');
+  });
+
+  it('challengeAgent accepts every known refusal reason', async () => {
+    for (const reason of ['busy', 'reserved', 'not_open', 'stale', 'limit_ip']) {
+      const { fn } = fakeFetch(() => json({ reason }, reason === 'limit_ip' ? 429 : 409));
+      expect(await createHttpApi('', fn).challengeAgent('5')).toEqual({ ok: false, reason });
+    }
+  });
+
   it('challengeAgent still throws on other statuses', async () => {
     const { fn } = fakeFetch(() => json({ reason: 'boom' }, 500));
     await expect(createHttpApi('', fn).challengeAgent('5')).rejects.toBeInstanceOf(ApiError);

@@ -34,17 +34,21 @@ export function arenaUrl(scope: ArenaScope): string {
   return `${proto}://${location.host}/ws?scope=${s}`;
 }
 
-type Action = { kind: 'msg'; msg: WsMessage; now: number } | { kind: 'connected'; value: boolean };
+type Action =
+  | { kind: 'msg'; msg: WsMessage; now: number }
+  | { kind: 'connected'; value: boolean }
+  | { kind: 'reset' };
 type HookState = { arena: ArenaState; connected: boolean };
 
+const initialHookState: HookState = { arena: initialArenaState, connected: false };
+
 function reduce(state: HookState, action: Action): HookState {
+  if (action.kind === 'reset') return initialHookState;
   if (action.kind === 'connected') {
     return state.connected === action.value ? state : { ...state, connected: action.value };
   }
   return { ...state, arena: reduceArena(state.arena, action.msg, action.now) };
 }
-
-const initialHookState: HookState = { arena: initialArenaState, connected: false };
 
 export function useArenaSocket(scope: ArenaScope): ArenaSocket {
   const [state, dispatch] = useReducer(reduce, initialHookState);
@@ -57,9 +61,20 @@ export function useArenaSocket(scope: ArenaScope): ArenaSocket {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let backoff: number | null = null;
 
+    const scheduleReconnect = () => {
+      backoff = nextBackoff(backoff);
+      timer = setTimeout(connect, backoff);
+    };
+
     const connect = () => {
       if (disposed) return;
-      const ws = socketFactory(url);
+      let ws: WebSocketLike;
+      try {
+        ws = socketFactory(url);
+      } catch {
+        scheduleReconnect();
+        return;
+      }
       socket = ws;
       ws.onopen = () => {
         if (disposed || socket !== ws) return;
@@ -75,14 +90,14 @@ export function useArenaSocket(scope: ArenaScope): ArenaSocket {
         if (disposed || socket !== ws) return;
         socket = null;
         dispatch({ kind: 'connected', value: false });
-        backoff = nextBackoff(backoff);
-        timer = setTimeout(connect, backoff);
+        scheduleReconnect();
       };
       ws.onerror = () => {
         // A close event follows an error; reconnect is handled there.
       };
     };
 
+    dispatch({ kind: 'reset' });
     connect();
 
     return () => {
