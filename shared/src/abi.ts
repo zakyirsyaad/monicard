@@ -1805,3 +1805,695 @@ export const stakeVaultAbi = [
     "inputs": []
   }
 ] as const;
+
+export const battleAbi = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "cards_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "DAMAGE_SCALE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_ROUNDS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "TURN_TIMEOUT_BLOCKS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "act",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "special",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "cards",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract INadCards"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "claimTimeout",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "createMatch",
+    "inputs": [
+      {
+        "name": "deck",
+        "type": "uint32[3]",
+        "internalType": "uint32[3]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "damageOf",
+    "inputs": [
+      {
+        "name": "atk",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "a",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "d",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "special",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "elementMult",
+    "inputs": [
+      {
+        "name": "a",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "d",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "getMatch",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct CardBattle.MatchView",
+        "components": [
+          {
+            "name": "p1",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "p2",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "status",
+            "type": "uint8",
+            "internalType": "enum CardBattle.Status"
+          },
+          {
+            "name": "round",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "score1",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "score2",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "turn",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "lastMoveBlock",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "deck1",
+            "type": "uint32[3]",
+            "internalType": "uint32[3]"
+          },
+          {
+            "name": "deck2",
+            "type": "uint32[3]",
+            "internalType": "uint32[3]"
+          },
+          {
+            "name": "card1",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "card2",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "hp1",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxHp1",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "atk1",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "el1",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "hp2",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxHp2",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "atk2",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "el2",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "special1",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "special2",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getMatches",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "count",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "out",
+        "type": "tuple[]",
+        "internalType": "struct CardBattle.MatchView[]",
+        "components": [
+          {
+            "name": "p1",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "p2",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "status",
+            "type": "uint8",
+            "internalType": "enum CardBattle.Status"
+          },
+          {
+            "name": "round",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "score1",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "score2",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "turn",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "lastMoveBlock",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "deck1",
+            "type": "uint32[3]",
+            "internalType": "uint32[3]"
+          },
+          {
+            "name": "deck2",
+            "type": "uint32[3]",
+            "internalType": "uint32[3]"
+          },
+          {
+            "name": "card1",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "card2",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "hp1",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxHp1",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "atk1",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "el1",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "hp2",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxHp2",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "atk2",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "el2",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "special1",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "special2",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "joinMatch",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "deck",
+        "type": "uint32[3]",
+        "internalType": "uint32[3]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "matchCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "Acted",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "player",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "special",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "damage",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "hpLeft",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "round",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MatchCreated",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "p1",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MatchEnded",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "winner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MatchJoined",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "p2",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RoundEnded",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "round",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "winnerSide",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "score1",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "score2",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "CannotJoinOwnMatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DrawFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DuplicateCard",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EmptyDeck",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MatchNotActive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MatchNotFound",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "MatchNotOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotCardOwner",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotPlayer",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotYourTurn",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RoundLimitReached",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SpecialAlreadyUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TimeoutNotReached",
+    "inputs": []
+  }
+] as const;
