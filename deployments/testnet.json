@@ -16,8 +16,8 @@
     "joinMatch": 102000,
     "act": 101000,
     "claimTimeout": 55000,
-    "battleStake": 200000,
-    "battleClaim": 200000
+    "battleStake": 240000,
+    "battleClaim": 262000
   },
   "stakeVault": "0x642C1364b62344128087549ceeD9268D5E3385df",
   "battle": "0x68B4759FaA160907327a6eB40dAe0A4094A90242",
