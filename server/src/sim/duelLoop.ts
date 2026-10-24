@@ -15,7 +15,9 @@ type Side = 1 | 2;
 
 const SECONDS_PER_BLOCK = 0.3;
 const DEFAULT_POLL_MS = 150;
-const MAX_NULL_READS = 400;
+// Budget of waiting (no state / failing state() / block not advancing) before giving up.
+// At the default pollMs of 150 ms this is 400 reads.
+const STALL_BUDGET_MS = 60_000;
 const MAX_CONSECUTIVE_ERRORS = 5;
 const FLUSH_BEFORE_END = 3;
 const STOP_BEFORE_END = 2;
@@ -23,6 +25,9 @@ const UNKNOWN_ELEMENT = -1;
 const PERCENT = 100;
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Shared flag: whoever sets `stopped` makes every runSide holding it exit at its next loop turn. */
+export type StopFlag = { stopped: boolean };
 
 export type RunSideOpts = {
   send: (data: Hex) => Promise<TxReceipt>;
@@ -36,6 +41,7 @@ export type RunSideOpts = {
   elements?: { mine: number; opp: number };
   pollMs?: number;
   sleep?: (ms: number) => Promise<void>;
+  stop?: StopFlag;
 };
 
 export type RunSideResult = { status: DuelStatus; summary: SideSummary };
@@ -48,6 +54,8 @@ type LoopMemory = {
   sentLate: boolean;
   consecutiveErrors: number;
   consecutiveNulls: number;
+  consecutiveStateErrors: number;
+  consecutiveStalls: number;
   hpTimeline: SideSummary['hpTimeline'];
 };
 
@@ -113,22 +121,45 @@ function recordSendError(error: unknown, mem: LoopMemory, opts: RunSideOpts): vo
   throw new Error(`runSide duel ${opts.duelId} side ${opts.side}: ${reason}`, { cause: error });
 }
 
-/** Read the next state; null means "nothing new, sleep and retry". */
+const maxPolls = (pollMs: number): number => Math.ceil(STALL_BUDGET_MS / Math.max(pollMs, 1));
+
+function failIfExhausted(count: number, limit: number, what: string, opts: RunSideOpts, cause?: unknown): void {
+  if (count < limit) return;
+  throw new Error(`runSide duel ${opts.duelId} side ${opts.side}: ${what} (${count} reads)`, { cause });
+}
+
+/** Call state(); null (no data) and rejections both count against the same bounded budget. */
+async function fetchState(mem: LoopMemory, opts: RunSideOpts, limit: number): Promise<SideState | null> {
+  let s: SideState | null;
+  try {
+    s = await opts.state();
+  } catch (error) {
+    mem.consecutiveStateErrors += 1;
+    const reason = error instanceof Error ? error.message : String(error);
+    failIfExhausted(mem.consecutiveStateErrors, limit, `state() failing: ${reason}`, opts, error);
+    return null;
+  }
+  mem.consecutiveStateErrors = 0;
+  mem.consecutiveNulls = s === null ? mem.consecutiveNulls + 1 : 0;
+  failIfExhausted(mem.consecutiveNulls, limit, 'no state yet', opts);
+  return s;
+}
+
+/** Read the next state; null means "nothing new" (caller loops again after the sleep done here). */
 async function readState(mem: LoopMemory, opts: RunSideOpts, sleep: (ms: number) => Promise<void>, pollMs: number) {
-  const s = await opts.state();
+  const limit = maxPolls(pollMs);
+  const s = await fetchState(mem, opts, limit);
   if (s === null) {
-    mem.consecutiveNulls += 1;
-    if (mem.consecutiveNulls >= MAX_NULL_READS) {
-      throw new Error(`runSide duel ${opts.duelId} side ${opts.side}: no state after ${MAX_NULL_READS} reads`);
-    }
     await sleep(pollMs);
     return null;
   }
-  mem.consecutiveNulls = 0;
   if (s.block === mem.lastBlockSeen) {
+    mem.consecutiveStalls += 1;
+    failIfExhausted(mem.consecutiveStalls, limit, `block stuck at ${s.block}`, opts);
     await sleep(pollMs);
     return null;
   }
+  mem.consecutiveStalls = 0;
   mem.lastBlockSeen = s.block;
   return s;
 }
@@ -145,10 +176,13 @@ export async function runSide(opts: RunSideOpts): Promise<RunSideResult> {
     sentLate: false,
     consecutiveErrors: 0,
     consecutiveNulls: 0,
+    consecutiveStateErrors: 0,
+    consecutiveStalls: 0,
     hpTimeline: [],
   };
 
   for (;;) {
+    if (opts.stop?.stopped) throw new Error(`runSide duel ${opts.duelId} side ${opts.side}: stopped`);
     const s = await readState(mem, opts, sleep, pollMs);
     if (s === null) continue;
     opts.onBlock?.(s);
@@ -180,7 +214,14 @@ export async function runSide(opts: RunSideOpts): Promise<RunSideResult> {
   }
 }
 
-/** Pure mapping from an onchain duel to one side's view at `block`. */
+/**
+ * Pure mapping from an onchain duel to one side's view at `block`.
+ *
+ * Read-order rule: `block` must not be newer than the duel snapshot `d` it is paired with
+ * (read the block number FIRST, then the duel; with a poller cache, use the block the snapshot
+ * was taken at). Otherwise a side can see `block >= endBlock` with HP that predates the last
+ * landed attacks, end on stale HP, and disagree with the other side.
+ */
 export function sideStateFromDuel(d: DuelView, side: Side, block: number): SideState {
   if (side === 1) {
     return {
@@ -232,6 +273,50 @@ function duelIdFromReceipt(receipt: TxReceipt): bigint {
   return created.args.id;
 }
 
+/**
+ * Run both sides concurrently. If one side fails, the other is stopped (shared flag) and awaited,
+ * so no loop keeps sending after we return; the first failure is the one rethrown.
+ */
+async function runBothSides(
+  opts: RunDuelPairOpts,
+  duelId: bigint,
+  stateFor: (side: Side) => () => Promise<SideState | null>,
+): Promise<[RunSideResult, RunSideResult]> {
+  const { p1, p2 } = opts;
+  const stop: StopFlag = { stopped: false };
+  const failures: unknown[] = [];
+  const run = async (side: Side, me: PairSide, other: PairSide): Promise<RunSideResult> => {
+    try {
+      return await runSide({
+        duelId,
+        batchBlocks: opts.batchBlocks,
+        pollMs: opts.pollMs,
+        sleep: opts.sleep,
+        stop,
+        side,
+        send: me.send,
+        state: stateFor(side),
+        tapsPerSec: me.tapsPerSec,
+        useSkill: me.useSkill,
+        onBlock: me.onBlock,
+        elements: me.element !== undefined && other.element !== undefined
+          ? { mine: me.element, opp: other.element }
+          : undefined,
+      });
+    } catch (error) {
+      // The first failure is the cause; later "stopped" errors from the sibling are fallout.
+      failures.push(error);
+      stop.stopped = true;
+      throw error;
+    }
+  };
+  const settled = await Promise.allSettled([run(1, p1, p2), run(2, p2, p1)]);
+  if (failures.length > 0) throw failures[0];
+  const [o1, o2] = settled;
+  if (o1?.status !== 'fulfilled' || o2?.status !== 'fulfilled') throw new Error('runDuelPair: sides did not settle');
+  return [o1.value, o2.value];
+}
+
 /** Create + join a duel, then run both sides concurrently. Settling is the caller's job. */
 export async function runDuelPair(opts: RunDuelPairOpts): Promise<RunDuelPairResult> {
   const { p1, p2 } = opts;
@@ -253,21 +338,7 @@ export async function runDuelPair(opts: RunDuelPairOpts): Promise<RunDuelPairRes
     const d = await opts.readDuel(duelId);
     return d !== null && d.status !== 'Open' ? sideStateFromDuel(d, side, block) : null;
   };
-  const common = { duelId, batchBlocks: opts.batchBlocks, pollMs: opts.pollMs, sleep: opts.sleep };
-  const known = p1.element !== undefined && p2.element !== undefined;
-  const run = (side: Side, me: PairSide, other: PairSide) =>
-    runSide({
-      ...common,
-      side,
-      send: me.send,
-      state: stateFor(side),
-      tapsPerSec: me.tapsPerSec,
-      useSkill: me.useSkill,
-      onBlock: me.onBlock,
-      elements: known ? { mine: me.element!, opp: other.element! } : undefined,
-    });
-
-  const [r1, r2] = await Promise.all([run(1, p1, p2), run(2, p2, p1)]);
+  const [r1, r2] = await runBothSides(opts, duelId, stateFor);
   if (r1.status !== r2.status) {
     throw new Error(`runDuelPair duel ${duelId}: sides disagree (${r1.status} vs ${r2.status})`);
   }

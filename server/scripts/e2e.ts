@@ -97,7 +97,10 @@ async function run(): Promise<DuelStatus> {
       });
     } finally {
       await miner.stop();
+      const minerFailure = miner.failure();
+      if (minerFailure) console.error('miner failed:', minerFailure);
     }
+    assert(miner.failure() === null, 'miner ran without errors');
     console.log(`duel ${result.duelId} finished: ${result.status}`);
 
     const settleData = encodeFunctionData({ abi: blitzArenaAbi, functionName: 'settle', args: [result.duelId] });

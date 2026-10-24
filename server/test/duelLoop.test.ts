@@ -29,6 +29,7 @@ type ChainOpts = {
   hpAt?: (block: number) => { myHp: number; oppHp: number };
   staleLastBlock?: boolean;
   nullReads?: number;
+  stateErrors?: number;
   sendFailures?: number;
   skillUsed?: boolean;
   initialLastBlock?: number;
@@ -40,11 +41,16 @@ function makeChain(o: ChainOpts) {
   let lastBlock = o.initialLastBlock ?? START_BLOCK;
   let readBlock = head;
   let nullsLeft = o.nullReads ?? 0;
+  let stateErrorsLeft = o.stateErrors ?? 0;
   let failuresLeft = o.sendFailures ?? 0;
   const sent: Sent[] = [];
   const hpAt = o.hpAt ?? (() => ({ myHp: MAX_HP, oppHp: MAX_HP }));
 
   const state = async (): Promise<SideState | null> => {
+    if (stateErrorsLeft > 0) {
+      stateErrorsLeft -= 1;
+      throw new Error('rpc state down');
+    }
     if (nullsLeft > 0) {
       nullsLeft -= 1;
       return null;
@@ -111,13 +117,20 @@ describe('runSide sending cadence', () => {
     }
     expect(chain.sent[0]!.taps).toBe(expected);
     expect(chain.sent[1]!.taps).toBe(expected);
+    // Each receipt lands 1 block after the read, so sends are exactly batchBlocks + 1 reads apart,
+    // except the final flush which may come sooner.
+    const gaps = chain.sent.slice(1).map((tx, i) => tx.readBlock - chain.sent[i]!.readBlock);
+    expect(gaps.slice(0, -1).every((gap) => gap === 4)).toBe(true);
+    expect(gaps.at(-1)).toBeLessThanOrEqual(4);
   });
 
   it('does not send during countdown', async () => {
     const chain = makeChain({ startAt: START_BLOCK - 8 });
     await baseRun(chain, { batchBlocks: 1 });
-    const firstReadAfterStart = Math.min(...chain.sent.map((tx) => tx.readBlock));
-    expect(firstReadAfterStart).toBeGreaterThanOrEqual(START_BLOCK);
+    expect(chain.sent.length).toBeGreaterThan(0);
+    for (const tx of chain.sent) expect(tx.readBlock).toBeGreaterThanOrEqual(START_BLOCK);
+    // First possible send: startBlock reached with lastBlock == startBlock, so delta hits batchBlocks 1 block later.
+    expect(chain.sent[0]!.readBlock).toBe(START_BLOCK + 1);
   });
 
   it('never sends at block >= endBlock - 2', async () => {
@@ -266,8 +279,9 @@ describe('runSide resilience', () => {
   });
 
   it('treats a reverted receipt as an error that does not move the base block', async () => {
-    const chain = makeChain({ startAt: START_BLOCK });
-    let reverts = 2;
+    // Stale lastBlock stays at START_BLOCK, so only receipts can move the base.
+    const chain = makeChain({ startAt: START_BLOCK + 3, staleLastBlock: true });
+    let reverts = 1;
     const send = async (data: Hex) => {
       const receipt = await chain.send(data);
       if (reverts > 0) {
@@ -276,8 +290,58 @@ describe('runSide resilience', () => {
       }
       return receipt;
     };
-    const out = await baseRun(chain, { send, batchBlocks: 1 });
-    expect(out.summary.hpTimeline.length).toBeGreaterThan(1);
+    const out = await baseRun(chain, { send, batchBlocks: 3 });
+    // 1st send (block 36, delta 3) reverts; had it moved the base to 37, the next send would wait until 40.
+    // Instead block 37 sees delta 4 from the unchanged base and sends 8 taps at once.
+    expect(chain.sent.slice(0, 3).map((tx) => [tx.readBlock, tx.taps])).toEqual([
+      [START_BLOCK + 3, 6],
+      [START_BLOCK + 4, 8],
+      [START_BLOCK + 8, 6],
+    ]);
+    // Only the successful tx lands in the timeline.
+    expect(out.summary.hpTimeline[0]!.block).toBe(START_BLOCK + 4);
+  });
+
+  it('retries when state() rejects below the cap and keeps playing', async () => {
+    const chain = makeChain({ startAt: END_BLOCK - 4, stateErrors: 5 });
+    const out = await baseRun(chain);
+    expect(out.status).toBe('Draw');
+  });
+
+  it('throws with context and cause when state() keeps rejecting', async () => {
+    const boom = new Error('rpc state down');
+    const promise = baseRun(makeChain({ startAt: START_BLOCK }), {
+      state: async () => {
+        throw boom;
+      },
+      side: 2,
+    });
+    await expect(promise).rejects.toThrow(/runSide duel 7 side 2: state\(\) failing: rpc state down/);
+    await expect(promise).rejects.toMatchObject({ cause: boom });
+  });
+
+  it('throws when the block never advances (stalled miner or poller)', async () => {
+    const frozen: SideState = {
+      myHp: 5, myMaxHp: 10, oppHp: 5, atk: 1, mult: 100, skillUsed: false, block: START_BLOCK + 1, endBlock: END_BLOCK, lastBlock: START_BLOCK,
+    };
+    let reads = 0;
+    await expect(
+      baseRun(makeChain({ startAt: START_BLOCK }), {
+        state: async () => {
+          reads += 1;
+          return frozen;
+        },
+        pollMs: 150,
+      }),
+    ).rejects.toThrow(/runSide duel 7 side 1: block stuck at 34/);
+    // ~60 s of polling at 150 ms.
+    expect(reads).toBe(401);
+  });
+
+  it('exits at once when its stop flag is set', async () => {
+    const chain = makeChain({ startAt: START_BLOCK });
+    await expect(baseRun(chain, { stop: { stopped: true } })).rejects.toThrow(/stopped/);
+    expect(chain.sent).toHaveLength(0);
   });
 
   it('polls with sleep when the block has not advanced', async () => {
@@ -378,11 +442,12 @@ describe('runDuelPair', () => {
       },
     });
     const readBlock = async () => ++head;
+    const peekBlock = async () => head;
     const readDuel = async (id: bigint): Promise<DuelView | null> => {
       if (head < 5) return { ...DUEL, id: id.toString(), status: 'Open' };
       return { ...DUEL, id: id.toString(), startBlock: 20, endBlock: 20 + DUEL_BLOCKS, hp1: 900, hp2: 400, maxHp1: 1000, maxHp2: 1000 };
     };
-    return { calls, sender, readBlock, readDuel };
+    return { calls, sender, readBlock, peekBlock, readDuel };
   }
 
   it('creates, joins with the DuelCreated id, and runs both sides', async () => {
@@ -415,6 +480,50 @@ describe('runDuelPair', () => {
     await expect(
       runDuelPair({ p1, p2: pair.sender('p2', 12n), readDuel: pair.readDuel, readBlock: pair.readBlock, batchBlocks: 3, sleep: noSleep }),
     ).rejects.toThrow(/DuelCreated/);
+  });
+
+  it('stops the other side promptly when one side fails', async () => {
+    const pair = makePair();
+    const failing: PairSide = {
+      ...pair.sender('p1', 11n),
+      send: async (data) => {
+        const decoded = decodeFunctionData({ abi: blitzArenaAbi, data });
+        if (decoded.functionName === 'createDuel') {
+          return { status: 'success', blockNumber: 1n, logs: [createdLog()] } as unknown as TransactionReceipt;
+        }
+        throw new Error('p1 wallet broke');
+      },
+    };
+    const p2Attacks = () => pair.calls.filter((c) => c.who === 'p2' && c.name === 'attack').length;
+    await expect(
+      runDuelPair({ p1: failing, p2: pair.sender('p2', 12n), readDuel: pair.readDuel, readBlock: pair.readBlock, batchBlocks: 3, sleep: noSleep }),
+    ).rejects.toThrow(/runSide duel 9 side 1: p1 wallet broke/);
+
+    // p2 was awaited and is idle: nothing more is sent or read, and it never ran to the end of the duel.
+    const attacksAtReturn = p2Attacks();
+    const headAtReturn = await pair.readBlock();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(p2Attacks()).toBe(attacksAtReturn);
+    expect(await pair.readBlock()).toBe(headAtReturn + 1);
+    expect(headAtReturn).toBeLessThan(20 + DUEL_BLOCKS);
+  });
+
+  it('throws when the two sides end with different outcomes', async () => {
+    const pair = makePair();
+    let endReads = 0;
+    const readDuel = async (id: bigint): Promise<DuelView | null> => {
+      const d = await pair.readDuel(id);
+      if (d === null || d.status === 'Open') return d;
+      // Past the window the first reader sees p1 ahead, every later reader sees p2 ahead.
+      if ((await pair.peekBlock()) >= d.endBlock) {
+        endReads += 1;
+        if (endReads > 1) return { ...d, hp1: 400, hp2: 900 };
+      }
+      return d;
+    };
+    await expect(
+      runDuelPair({ p1: pair.sender('p1', 11n), p2: pair.sender('p2', 12n), readDuel, readBlock: pair.readBlock, batchBlocks: 3, sleep: noSleep }),
+    ).rejects.toThrow(/duel 9: sides disagree \(P1Won vs P2Won\)/);
   });
 
   it('throws when joinDuel reverts', async () => {

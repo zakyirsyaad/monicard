@@ -7,6 +7,7 @@ import {
   defineChain,
   http,
   toHex,
+  TransactionReceiptNotFoundError,
   type Account,
   type PublicClient,
   type TransactionReceipt,
@@ -116,17 +117,23 @@ export async function fundAccount(rpcUrl: string, address: Hex, wei: bigint): Pr
   await rpc(rpcUrl, 'anvil_setBalance', [address, toHex(wei)]);
 }
 
-/** Poll for a receipt every ~25 ms (viem's default 4 s polling is far too slow for 300 ms blocks). */
+/**
+ * Poll for a receipt every ~25 ms (viem's default 4 s polling is far too slow for 300 ms blocks).
+ * Only "receipt not found" is retried; any other error (connection refused, ...) is rethrown at once.
+ */
 export async function waitForReceipt(client: PublicClient, hash: Hex): Promise<TransactionReceipt> {
   const deadline = Date.now() + RECEIPT_TIMEOUT_MS;
+  let lastNotFound: unknown;
   while (Date.now() < deadline) {
     try {
       return await client.getTransactionReceipt({ hash });
-    } catch {
+    } catch (error) {
+      if (!(error instanceof TransactionReceiptNotFoundError)) throw error;
+      lastNotFound = error;
       await sleep(RECEIPT_POLL_MS);
     }
   }
-  throw new Error(`receipt for ${hash} not found after ${RECEIPT_TIMEOUT_MS} ms`);
+  throw new Error(`receipt for ${hash} not found after ${RECEIPT_TIMEOUT_MS} ms`, { cause: lastNotFound });
 }
 
 /** Deploy NadCards + BlitzArena and wire the arena. Each tx is mined explicitly with `mine(1)`. */
@@ -206,7 +213,12 @@ export async function createAnvilSender(rpcUrl: string, account: Account, to: He
       nonce += 1;
       return hash;
     } catch (error) {
-      nonce = await syncNonce();
+      // Resync from chain, but never let a failing resync hide the original send error.
+      try {
+        nonce = await syncNonce();
+      } catch {
+        // keep the local nonce; the next send will fail loudly if it is wrong
+      }
       throw error;
     }
   };
@@ -222,16 +234,35 @@ export async function createAnvilSender(rpcUrl: string, account: Account, to: He
   };
 }
 
-/** Sequential interval miner: never overlaps `mine` calls. */
+export type Miner = {
+  /** Stops the loop and waits for it. Never throws: check `failure()` afterwards. */
+  stop(): Promise<void>;
+  /** The error that made the miner give up (the loop stops at the first failing `mine`), else null. */
+  failure(): Error | null;
+};
+
+/**
+ * Sequential interval miner: never overlaps `mine` calls. A failing `mine` ends the loop and is
+ * remembered (and passed to `onError`) instead of surfacing as an unhandled rejection.
+ */
 export function startMiner(
   mine: (blocks: number) => Promise<void>,
   intervalMs: number,
   blocksPerTick = 1,
-): { stop(): Promise<void> } {
+  onError?: (error: Error) => void,
+): Miner {
   let running = true;
+  let failure: Error | null = null;
   const loop = (async () => {
     while (running) {
-      await mine(blocksPerTick);
+      try {
+        await mine(blocksPerTick);
+      } catch (error) {
+        failure = error instanceof Error ? error : new Error(String(error));
+        running = false;
+        onError?.(failure);
+        return;
+      }
       await sleep(intervalMs);
     }
   })();
@@ -240,5 +271,6 @@ export function startMiner(
       running = false;
       await loop;
     },
+    failure: () => failure,
   };
 }
