@@ -40,7 +40,7 @@ describe('createHttpApi endpoints', () => {
   });
 
   it('getAccount puts the address in the path', async () => {
-    const acct = { nonce: 3, balance: '1000', cardId: null };
+    const acct = { nonce: 3, balance: '1000', cardId: null, hasPulled: false };
     const { fn, calls } = fakeFetch(() => json(acct));
     expect(await createHttpApi('', fn).getAccount(ADDR)).toEqual(acct);
     expect(calls[0]?.url).toBe(`/account/${ADDR}`);

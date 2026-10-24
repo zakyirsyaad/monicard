@@ -36,7 +36,10 @@ export type Account = {
   nonce: number;
   /** wei */
   balance: string;
+  /** null when the address no longer owns its card */
   cardId: string | null;
+  /** the free pull was used */
+  hasPulled: boolean;
 };
 
 export type RelayResult = {
