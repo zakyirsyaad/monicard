@@ -38,7 +38,7 @@ import {
   strikeDamage,
   turnBlocksLeft,
 } from '../../lib/battle/rules';
-import { blocksToSeconds, isBattleMock, useMatch } from '../../lib/battle/useMatch';
+import { isBattleMock, useMatch } from '../../lib/battle/useMatch';
 import type { BattleSide, MatchView } from '../../lib/battle/types';
 import { BattleResult } from './ResultOverlay';
 import { BoardCard, HandCard, Pile, ScoreDots } from './cards';
@@ -147,7 +147,7 @@ function Battle({ id }: { id: string }) {
   const advantage =
     myTurn && myFront !== null && targetCard !== null ? advantageText(myFront.element, targetCard.element) : null;
   const blocksLeft = match ? turnBlocksLeft(match, state.block) : 0;
-  const clock = match?.status === 'Active' ? `${blocksToSeconds(blocksLeft)}s` : '—';
+  const clock = match?.status === 'Active' ? `${blocksLeft} blk` : '—';
   const isAgent =
     side !== null &&
     match !== null &&
@@ -547,3 +547,4 @@ function Battle({ id }: { id: string }) {
     </main>
   );
 }
+

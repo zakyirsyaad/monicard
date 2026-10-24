@@ -131,7 +131,7 @@ export function Pile({ count, side }: PileProps) {
     >
       <div className="absolute inset-x-1 top-1 h-full rounded-card border border-line bg-surface-sunken" aria-hidden="true" />
       <div className="absolute inset-x-0 top-0 flex h-[108px] flex-col items-center justify-center rounded-card border-2 border-line bg-surface-raised px-1">
-        <span className="label text-center text-[9px] leading-tight text-ink-muted">Deck</span>
+        <span className="label text-center text-[8px] leading-tight text-ink-muted">Monicard</span>
         <span className="font-mono text-lg font-semibold leading-tight tabular-nums text-ink">{count}</span>
         <span className="text-[9px] leading-tight text-ink-muted">left</span>
       </div>
@@ -159,3 +159,4 @@ export function ScoreDots({ filled, side }: ScoreDotsProps) {
     </span>
   );
 }
+
