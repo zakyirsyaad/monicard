@@ -159,9 +159,11 @@ describe('choosePlacement', () => {
     expect(choosePlacement(m, 2)).toBe(0); // 150 > 90
   });
 
-  test('returns 255 for a full board or an empty hand', () => {
+  test('returns 255 for a full board, and places the incoming draw when the hand is empty', () => {
     expect(choosePlacement(match({ board2: [0, 1, 2] }), 2)).toBe(NO_PLACEMENT);
-    expect(choosePlacement(match({ drawn2: 2, placed2: 0b11 }), 2)).toBe(NO_PLACEMENT);
+    // act draws before placing, so the fresh draw number is a valid hand index.
+    expect(choosePlacement(match({ drawn2: 2, placed2: 0b11 }), 2)).toBe(2);
+    expect(choosePlacement(match({ drawn2: 10, placed2: 0b1111111111 }), 2)).toBe(NO_PLACEMENT);
   });
 });
 

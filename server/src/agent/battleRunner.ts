@@ -39,6 +39,8 @@ const ACT_TIMEOUT_MS = 10_000;
 export const BATTLE_RUN_MS = 180_000;
 /** Poll interval while waiting for the opponent's move. */
 const WAIT_MS = 300;
+/** Chain re-read while idle even when the poller cache has not moved (~3 s). */
+const CACHE_REFRESH_EVERY = 10;
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const defaultLog = (msg: string, err?: unknown): void => console.error(msg, err);
@@ -100,16 +102,15 @@ export function createBattleRunner(deps: BattleRunnerDeps): BattleRunner {
     );
 
   /**
-   * Play as p2 until the match ends or the time cap. A chain read follows every own
-   * action (the poller cache is still one block behind); while waiting for p1 the
-   * poller's `getMatch` cache is enough and the chain is only a fallback.
+   * Play as p2 until the match ends or the time cap. Every action is decided from
+   * a fresh chain read: the poller's match cache can lag the block its snapshot is
+   * labelled with, so the cache is only used to wake the wait loop early.
    */
   async function play(id: bigint, policy: Policy): Promise<BattleResult> {
     const deadline = now() + BATTLE_RUN_MS;
-    let fresh = true;
+    let match = await readMatch(id);
+    let idle = 0;
     while (now() < deadline) {
-      const cached = fresh ? undefined : poller.battleMatch(id.toString());
-      const match = cached ?? (await readMatch(id));
       if (match === null) return 'send_failed';
       if (isFinishedMatch(match)) return 'ok';
       if (match.status !== 'Active') return 'not_open';
@@ -117,18 +118,26 @@ export function createBattleRunner(deps: BattleRunnerDeps): BattleRunner {
       if (match.turn === 2) {
         const { handIdx, special } = battleAction(match, policy, 2);
         if (!(await act(id, handIdx, special))) return 'send_failed';
-        fresh = true;
+        match = await readMatch(id);
+        idle = 0;
         continue;
       }
 
       if (timeoutDue(match, poller.latestBlock())) {
         if (!(await claimTimeout(id))) return 'send_failed';
-        fresh = true;
+        match = await readMatch(id);
+        idle = 0;
         continue;
       }
 
-      fresh = false;
       await sleep(WAIT_MS);
+      idle += 1;
+      const cached = poller.battleMatch(id.toString());
+      const moved = cached !== undefined && cached.lastMoveBlock > match.lastMoveBlock;
+      if (moved || idle >= CACHE_REFRESH_EVERY) {
+        match = await readMatch(id);
+        idle = 0;
+      }
     }
     log(`battle: match ${id} hit the ${BATTLE_RUN_MS} ms cap, stopping`);
     return 'ok';
@@ -140,8 +149,7 @@ export function createBattleRunner(deps: BattleRunnerDeps): BattleRunner {
 
     let handedOff = false;
     try {
-      const id = matchId.toString();
-      const match = poller.battleMatch(id) ?? (await readMatch(matchId));
+      const match = await readMatch(matchId);
       if (match === null) return 'not_open';
       if (match.status !== 'Open') return 'not_open';
       if (lower(match.p1) === lower(queue.address)) return 'not_open';

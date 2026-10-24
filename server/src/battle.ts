@@ -229,12 +229,14 @@ export function totalDamage(match: BattleMatch, side: Side, special: boolean): n
 /**
  * Hand index to place this turn: the card that hits the enemy front hardest, then
  * the highest raw ATK, then the highest max HP, then the lowest draw number.
- * 255 when the board is full or the hand is empty.
+ * 255 when the board is full. When the known hand is empty but the pile still has
+ * a card, place the card that `act` is about to draw (draw number = drawn).
  */
 export function choosePlacement(match: BattleMatch, side: Side = 2): number {
   if (openSlot(match, side) === null) return NO_PLACEMENT;
+  const drawn = side === 1 ? match.drawn1 : match.drawn2;
   const hand = handOf(match, side);
-  if (hand.length === 0) return NO_PLACEMENT;
+  if (hand.length === 0) return drawn < MAX_DRAWS ? drawn : NO_PLACEMENT;
   const cards = cardsOf(match, side);
   const target = frontDrawNo(match, enemyOf(side));
   const score = (drawNo: number): [number, number, number, number] => {
