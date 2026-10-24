@@ -108,7 +108,7 @@ export function Home() {
             {sponsor ? ` · Presented by ${sponsor}` : ''}
           </p>
         )}
-        <h1 className="display">NadGacha</h1>
+        <h1 className="display">Monicard</h1>
         <p className="body text-ink-muted">Real-time 1v1 card duels on Monad testnet.</p>
       </header>
       <OddsTable />

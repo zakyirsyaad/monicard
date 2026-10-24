@@ -3,6 +3,7 @@ import type { Hex } from 'viem';
 import {
   AGENT_NAME,
   duelStatusText,
+  nextPeak,
   pickFeatured,
   sideLabel,
   statsItems,
@@ -235,5 +236,19 @@ describe('tileStatusText', () => {
     expect(tileStatusText(d, 150)).toBe('9s left');
     expect(tileStatusText(duel('1', { status: 'P2Won' }), 150)).toBe('Finished');
     expect(tileStatusText(duel('1', { status: 'Draw' }), 150)).toBe('Finished');
+  });
+});
+
+describe('nextPeak', () => {
+  it('keeps the larger of the previous peak and the new rate', () => {
+    expect(nextPeak(0, 3.4)).toBe(3.4);
+    expect(nextPeak(5, 3.4)).toBe(5);
+    expect(nextPeak(5, 7.25)).toBe(7.25);
+  });
+
+  it('ignores non-finite and negative rates', () => {
+    expect(nextPeak(2, Number.NaN)).toBe(2);
+    expect(nextPeak(2, Number.POSITIVE_INFINITY)).toBe(2);
+    expect(nextPeak(2, -1)).toBe(2);
   });
 });

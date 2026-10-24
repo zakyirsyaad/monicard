@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Hex } from 'viem';
 import type { AgentMsg, Config, DuelView, StatsMsg } from '../src/lib/types';
 import { HpBar } from '../src/components/HpBar';
 import { LatencyBadge } from '../src/components/LatencyBadge';
 import { AgentPanel } from '../src/routes/arena/AgentPanel';
+import { AudienceQr } from '../src/routes/arena/AudienceQr';
 import { Header } from '../src/routes/arena/Header';
 import { Leaderboard } from '../src/routes/arena/Leaderboard';
 import { SwarmGrid } from '../src/routes/arena/SwarmGrid';
@@ -16,7 +17,7 @@ const TX: Hex = '0xabcdef0000000000000000000000000000000000000000000000000000001
 
 const CONFIG = {
   contracts: { cards: CARDS, arena: ARENA },
-  event: { name: 'NadGacha BlitzArena', sponsor: 'Monad Blitz Jogja' },
+  event: { name: 'Battle Night', sponsor: 'Monad Blitz Jogja' },
 } as Config;
 
 const STATS: StatsMsg = {
@@ -35,7 +36,8 @@ const render = (node: React.ReactElement) => renderToStaticMarkup(node);
 describe('Header', () => {
   it('shows event, sponsor, both contract links, the testnet label and the live state', () => {
     const html = render(<Header config={CONFIG} stats={STATS} block={73_562_100} connected />);
-    expect(html).toContain('NadGacha BlitzArena');
+    expect(html).toContain('Monicard');
+    expect(html).toContain('Battle Night');
     expect(html).toContain('Presented by Monad Blitz Jogja');
     expect(html).toContain('Monad testnet');
     expect(html).toContain(`href="https://testnet.monadscan.com/address/${CARDS}"`);
@@ -182,16 +184,50 @@ describe('HpBar size', () => {
     expect(html).not.toContain('h-3');
     expect(html).toContain('display');
     expect(html).not.toContain('data-lg');
+    expect(html).toContain('font-mono');
+    expect(html).toContain('tabular-nums');
   });
 });
 
 describe('TxCounters', () => {
   it('uses the design-scale display-tap class, not a stock Tailwind size', () => {
-    const html = render(<TxCounters stats={STATS} />);
+    const html = render(<TxCounters stats={STATS} peak={4.26} />);
     expect(html).toContain('display-tap');
     expect(html).toContain('font-mono');
     expect(html).toContain('tabular-nums');
     expect(html).not.toContain('text-6xl');
+  });
+});
+
+describe('TxCounters measured numbers', () => {
+  it('shows total, peak with one decimal and average confirmation', () => {
+    const html = render(<TxCounters stats={STATS} peak={4.26} />);
+    expect(html).toContain('Total onchain tx');
+    expect(html).toContain('1,234');
+    expect(html).toContain('Peak 4.3 tx/s');
+    expect(html).toContain('Avg confirmation 300 ms');
+  });
+
+  it('hides peak and average while they are 0', () => {
+    const html = render(<TxCounters stats={{ ...STATS, avgLatencyMs: 0 }} peak={0} />);
+    expect(html).not.toContain('Peak');
+    expect(html).not.toContain('Avg confirmation');
+  });
+});
+
+describe('AudienceQr', () => {
+  it('shows the title, host, hint and a QR on a light chip', () => {
+    vi.stubGlobal('window', { location: { origin: 'https://play.example.test', host: 'play.example.test' } });
+    try {
+      const html = render(<AudienceQr />);
+      expect(html).toContain('Scan to fight the AI Agent');
+      expect(html).toContain('play.example.test');
+      expect(html).toContain('Open this link in your browser');
+      expect(html).toContain('data-theme="light"');
+      expect(html).toContain('<svg');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

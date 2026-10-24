@@ -118,7 +118,7 @@ describe('mock api', () => {
       chainId: 10143,
       batchMs: 1000,
       pullPrice: '50000000000000000',
-      event: { name: 'NadGacha BlitzArena', sponsor: 'Monad Blitz Jogja' },
+      event: { name: 'Monad Blitz Jogja Vol. 2', sponsor: null },
     });
     expect(config.bots.length).toBeGreaterThanOrEqual(1);
 

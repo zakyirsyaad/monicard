@@ -30,7 +30,8 @@ export function Header({ config, stats, block, connected }: HeaderProps) {
     <header className="flex flex-col gap-3">
       <div className="flex items-end justify-between gap-8">
         <div className="min-w-0">
-          <h1 className="display text-ink">{config.event.name}</h1>
+          <h1 className="display text-ink">Monicard</h1>
+          <p className="title text-ink-muted">{config.event.name}</p>
           {config.event.sponsor && <p className="title text-ink-muted">Presented by {config.event.sponsor}</p>}
         </div>
         <ul className="data-lg flex flex-wrap justify-end gap-x-3 text-ink">

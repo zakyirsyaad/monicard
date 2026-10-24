@@ -86,7 +86,7 @@ const CONFIG: Config = {
   gasPrice: '100000000000',
   batchMs: 1000,
   pullPrice: PULL_PRICE.toString(),
-  event: { name: 'NadGacha BlitzArena', sponsor: 'Monad Blitz Jogja' },
+  event: { name: 'Monad Blitz Jogja Vol. 2', sponsor: null },
   agent: '0x00000000000000000000000000000000000000a9',
   // bots[0] is the "friend" that joins open duels; the rest play the projector showcase.
   bots: [

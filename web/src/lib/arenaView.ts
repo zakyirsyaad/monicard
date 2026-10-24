@@ -53,6 +53,11 @@ export function statsItems(stats: StatsMsg | null, treasury: string): StatsItem[
   return items.filter((item): item is StatsItem => item !== null);
 }
 
+/** Highest tx/s seen so far. Garbage rates (NaN, infinite, negative) leave the peak alone. */
+export function nextPeak(prev: number, txPerSec: number): number {
+  return Number.isFinite(txPerSec) && txPerSec > prev ? txPerSec : prev;
+}
+
 const byIdAsc = (a: DuelView, b: DuelView): number => Number(a.id) - Number(b.id);
 
 /** A bot duel has bots on both sides. Bot vs human is not a bot duel. */

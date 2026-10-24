@@ -1,8 +1,9 @@
-import { useMemo } from 'react';
-import { pickFeatured, swarmDuels } from '../lib/arenaView';
+import { useEffect, useMemo, useState } from 'react';
+import { nextPeak, pickFeatured, swarmDuels } from '../lib/arenaView';
 import { useArenaSocket } from '../lib/useArenaSocket';
 import { useConfig } from '../lib/useConfig';
 import { AgentPanel } from './arena/AgentPanel';
+import { AudienceQr } from './arena/AudienceQr';
 import { FeaturedDuel } from './arena/FeaturedDuel';
 import { Header } from './arena/Header';
 import { Leaderboard } from './arena/Leaderboard';
@@ -16,6 +17,10 @@ export function Arena() {
   const { config } = useConfig();
   const socket = useArenaSocket('all');
   const duels = useMemo(() => [...socket.duels.values()], [socket.duels]);
+  const [peak, setPeak] = useState(0);
+  useEffect(() => {
+    if (socket.stats) setPeak((prev) => nextPeak(prev, socket.stats?.txPerSec ?? 0));
+  }, [socket.stats]);
 
   if (!config) {
     return (
@@ -37,7 +42,8 @@ export function Arena() {
         </div>
         <div className="flex flex-col gap-8">
           <AgentPanel agent={socket.agent} />
-          <TxCounters stats={socket.stats} />
+          <AudienceQr />
+          <TxCounters stats={socket.stats} peak={peak} />
           {socket.leaderboard !== null && <Leaderboard entries={socket.leaderboard} />}
         </div>
       </div>
