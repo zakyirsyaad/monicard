@@ -8,6 +8,7 @@ import {
   emptyBoardSlot,
   frontCard,
   handCards,
+  isExhausted,
   otherSide,
   sameAddress,
   sideData,
@@ -17,8 +18,9 @@ import type { BattleSide, MatchView } from './types';
 
 /**
  * In-browser CardBattle simulator for `VITE_USE_MOCK=1` and for tests.
- * Mirrors BATTLE-SPEC v3: ten random draws per player, a three-slot board,
- * one action per turn, Special once per match, two KOs to win.
+ * Mirrors CardBattle v4: ten random draws per player, a three-slot board, one action
+ * per turn, Special once per match, two KOs to win, and the next player's draw at
+ * the end of an action so the card is already in hand when their turn starts.
  */
 
 export const MOCK_BLOCK_MS = 300;
@@ -228,19 +230,7 @@ export function createBattleSim(options: SimOptions = {}) {
 
   function win(match: MatchView, side: BattleSide): MatchView {
     clearTimer(match.id);
-    return { ...match, status: side === 1 ? 'P1Won' : 'P2Won' };
-  }
-
-  function exhaustedLoser(match: MatchView): BattleSide | null {
-    const p1Out = sideData(match, 1);
-    const p2Out = sideData(match, 2);
-    const p1Empty =
-      p1Out.board.every((n) => n === EMPTY_SLOT) && handCards(p1Out).length === 0 && match.drawn1 >= MAX_DRAWS;
-    const p2Empty =
-      p2Out.board.every((n) => n === EMPTY_SLOT) && handCards(p2Out).length === 0 && match.drawn2 >= MAX_DRAWS;
-    if (p1Empty && !p2Empty) return 1;
-    if (p2Empty && !p1Empty) return 2;
-    return null;
+    return { ...match, turn: 0, status: side === 1 ? 'P1Won' : 'P2Won' };
   }
 
   function act(id: string, address: string, handIdx: number, special: boolean): ActResult {
@@ -253,9 +243,6 @@ export function createBattleSim(options: SimOptions = {}) {
     if (special && used) return { ok: false, reason: 'special_used' };
 
     let next = match;
-    const drawn = side === 1 ? next.drawn1 : next.drawn2;
-    const drawnAfter = Math.min(MAX_DRAWS, drawn + 1);
-    next = patchSide(next, side, { drawn: drawnAfter });
 
     if (handIdx !== NO_PLACE) {
       const hand = handCards(sideData(next, side)).map((card) => card.drawNo);
@@ -270,6 +257,7 @@ export function createBattleSim(options: SimOptions = {}) {
 
     const defender = otherSide(side);
     const target = frontCard(sideData(next, defender));
+    let ko = false;
     if (target !== null && boardSize(sideData(next, side)) > 0) {
       const attacker = sideData(next, side);
       const base = boardDamage(attacker, target.element);
@@ -284,6 +272,7 @@ export function createBattleSim(options: SimOptions = {}) {
         const score = (side === 1 ? next.score1 : next.score2) + 1;
         next = patchSide(next, defender, { hp, board });
         next = patchSide(next, side, { score });
+        ko = true;
         if (score >= 2) {
           next = win(next, side);
           matches.set(id, next);
@@ -297,12 +286,21 @@ export function createBattleSim(options: SimOptions = {}) {
     if (special && target !== null && boardSize(sideData(next, side)) > 0) {
       next = patchSide(next, side, { special: true });
     }
+
+    // The opponent is out of everything: no board card, no hand, no pile.
+    if (ko && isExhausted(sideData(next, defender))) {
+      next = win(next, side);
+      matches.set(id, next);
+      emit();
+      return { ok: true };
+    }
+
+    // CardBattle draws for the next player before the turn passes (BATTLE-SPEC v4):
+    // the new card is already in hand when that player starts.
+    const nextDrawn = defender === 1 ? next.drawn1 : next.drawn2;
+    if (nextDrawn < MAX_DRAWS) next = patchSide(next, defender, { drawn: nextDrawn + 1 });
     next = { ...next, turn: defender, lastMoveBlock: block() };
 
-    const loser = exhaustedLoser(next);
-    if (loser !== null) {
-      next = win(next, otherSide(loser));
-    }
     matches.set(id, next);
     emit();
     scheduleAgent(id);

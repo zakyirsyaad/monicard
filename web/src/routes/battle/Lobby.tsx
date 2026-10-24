@@ -5,7 +5,8 @@ import { Button } from '../../components/Button';
 import { Notice } from '../../components/Notice';
 import { burnerAccount } from '../../lib/player';
 import { shortHex } from '../../lib/format';
-import { toFriendly } from '../../lib/errors';
+import { battleErrorText } from '../../lib/battle/errors';
+import type { WalletStep } from '../../lib/battle/fund';
 import { useConfig } from '../../lib/useConfig';
 import { battleAvailable, challengeBattleAgent, createBattle } from '../../lib/battle/actions';
 
@@ -80,8 +81,10 @@ function SharePanel({
 }
 
 export function BattleLobby() {
+  const navigate = useNavigate();
   const { config, failed } = useConfig();
   const [busy, setBusy] = useState<Busy>(null);
+  const [phase, setPhase] = useState<WalletStep>('send');
   const [createdId, setCreatedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const address = burnerAccount().address;
@@ -89,51 +92,59 @@ export function BattleLobby() {
   const available = battleAvailable(config);
   const ready = config !== null && available;
   const unavailable = failed || (config !== null && !available);
+  const walletLabel = (normal: string): string => (phase === 'wallet' ? 'Preparing your wallet…' : normal);
 
-  const run = async (kind: Exclude<Busy, null>, action: () => Promise<string | null>) => {
+  const run = async (kind: Exclude<Busy, null>, action: (onStep: (step: WalletStep) => void) => Promise<string | null>) => {
     if (busy || !config) return;
     setBusy(kind);
+    setPhase('wallet');
     setError(null);
     try {
-      const id = await action();
+      const id = await action((step) => setPhase(step));
       if (id !== null) setCreatedId(id);
     } catch (err) {
-      setError(toFriendly(err, { fn: 'createMatch' }));
+      setError(battleErrorText(err, { fn: 'createMatch' }));
     } finally {
       setBusy(null);
+      setPhase('send');
     }
   };
 
   const create = () =>
-    run('create', async () => {
-      const result = await createBattle(config as NonNullable<typeof config>);
+    run('create', async (onStep) => {
+      const result = await createBattle(config as NonNullable<typeof config>, onStep);
       return result.id;
     });
 
   const fightAgent = async () => {
     if (busy || !config) return;
     setBusy('agent');
+    setPhase('wallet');
     setError(null);
     try {
-      const id = createdId ?? (await createBattle(config)).id;
+      const id = createdId ?? (await createBattle(config, (step) => setPhase(step))).id;
       if (id === null) {
         setError("Couldn't create the match. Try again.");
         return;
       }
       setCreatedId(id);
+      setPhase('send');
       const result = await challengeBattleAgent(config, id);
-      if (!result.ok) {
-        if (result.reason === 'not_open' || result.reason === 'send_failed') setCreatedId(null);
-        setError(
-          result.reason === 'not_open'
-            ? "The AI Agent couldn't join this room. Create a new one."
-            : 'AI Agent is busy. Try again in a moment.',
-        );
+      if (result.ok) {
+        navigate(`/battle/${id}`);
+        return;
       }
-    } catch {
-      setError('AI Agent is busy. Try again in a moment.');
+      if (result.reason === 'not_open' || result.reason === 'send_failed') setCreatedId(null);
+      setError(
+        result.reason === 'not_open'
+          ? "The AI Agent couldn't join this room. Create a new one."
+          : 'AI Agent is busy. Try again in a moment.',
+      );
+    } catch (err) {
+      setError(battleErrorText(err, { fn: 'createMatch' }));
     } finally {
       setBusy(null);
+      setPhase('send');
     }
   };
 
@@ -179,7 +190,7 @@ export function BattleLobby() {
           <section className="mt-auto flex flex-col gap-3" aria-label="Start a match">
             <Button
               busy={busy === 'create'}
-              busyLabel="Creating match…"
+              busyLabel={walletLabel('Creating match…')}
               disabled={!ready || busy !== null}
               onClick={() => void create()}
             >
@@ -188,7 +199,7 @@ export function BattleLobby() {
             <Button
               variant="secondary"
               busy={busy === 'agent'}
-              busyLabel="AI Agent joining…"
+              busyLabel={walletLabel('AI Agent joining…')}
               disabled={!ready || busy !== null}
               onClick={() => void fightAgent()}
             >

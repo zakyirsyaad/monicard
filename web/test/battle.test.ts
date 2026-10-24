@@ -11,6 +11,7 @@ import {
   frontCard,
   handCards,
   handOf,
+  newDrawNumbers,
   normalizeMatch,
   pileLeft,
   sideData,
@@ -109,7 +110,9 @@ describe('Card Battle v3 rules', () => {
     let match = sim.getMatch(id);
     expect(match).not.toBeNull();
     if (match === null) return;
-    expect(match.drawn2).toBe(2);
+    // The acting player does not draw; the opponent gets the next card at the end.
+    expect(match.drawn2).toBe(1);
+    expect(match.drawn1).toBe(2);
     expect(match.board2[0]).toBe(0);
     expect(match.special2).toBe(false);
     expect(match.hp1[0]).toBe(1650);
@@ -120,23 +123,37 @@ describe('Card Battle v3 rules', () => {
     expect(match).not.toBeNull();
     if (match === null) return;
     expect(match.drawn1).toBe(2);
+    expect(match.drawn2).toBe(2);
     expect(match.board1[0]).toBe(0);
     expect(match.hp2[0]).toBe(1230);
     expect(match.turn).toBe(2);
   });
 
-  it('rejects an invalid hand index, a used special, and a full board', () => {
+  it('hands the next draw to the opponent at the end of the action', () => {
+    const { sim, id } = newMatch();
+    const before = sim.getMatch(id);
+    expect(before).not.toBeNull();
+    if (before === null) return;
+
+    expect(sim.act(id, P2, 0, false)).toEqual({ ok: true });
+    const after = sim.getMatch(id);
+    expect(after).not.toBeNull();
+    if (after === null) return;
+
+    expect(newDrawNumbers(before, after, 1)).toEqual([1]);
+    expect(newDrawNumbers(before, after, 2)).toEqual([]);
+    expect(handOf(sideData(after, 1))).toEqual([0, 1]);
+    expect(pileLeft(sideData(after, 1))).toBe(8);
+  });
+
+  it('rejects an invalid hand index and a fourth card on the board', () => {
     const { sim, id } = newMatch();
 
     expect(sim.act(id, P1, 0, false)).toEqual({ ok: false, reason: 'not_your_turn' });
     expect(sim.act(id, P2, 5, false)).toEqual({ ok: false, reason: 'card_not_in_hand' });
 
-    expect(sim.act(id, P2, 0, true)).toEqual({ ok: true });
-    expect(sim.act(id, P1, 0, false)).toEqual({ ok: true });
-    expect(sim.act(id, P2, 255, true)).toEqual({ ok: true });
+    expect(sim.act(id, P2, 0, false)).toEqual({ ok: true });
     expect(sim.act(id, P1, 255, false)).toEqual({ ok: true });
-    expect(sim.act(id, P2, 255, true)).toEqual({ ok: false, reason: 'special_used' });
-
     expect(sim.act(id, P2, 1, false)).toEqual({ ok: true });
     expect(sim.act(id, P1, 255, false)).toEqual({ ok: true });
     expect(sim.act(id, P2, 2, false)).toEqual({ ok: true });
@@ -144,7 +161,7 @@ describe('Card Battle v3 rules', () => {
     expect(sim.act(id, P2, 3, false)).toEqual({ ok: false, reason: 'board_full' });
   });
 
-  it('does not spend Special when no attack can land', () => {
+  it('does not spend Special when no attack can land, then spends it once', () => {
     const { sim, id } = newMatch();
 
     expect(sim.act(id, P2, 0, true)).toEqual({ ok: true });
@@ -160,10 +177,14 @@ describe('Card Battle v3 rules', () => {
     expect(match).not.toBeNull();
     if (match === null) return;
     expect(match.special2).toBe(true);
+
+    expect(sim.act(id, P1, 255, false)).toEqual({ ok: true });
+    expect(sim.act(id, P2, 255, true)).toEqual({ ok: false, reason: 'special_used' });
   });
 
   it('scores a KO, removes the front card and frees the slot', () => {
     const { sim, id } = newMatch();
+    // Both sides place, so P2's three board cards hit P1's 1,650 HP front for 1,260.
     const moves: Array<[string, number]> = [
       [P2, 0],
       [P1, 0],

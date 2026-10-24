@@ -3,17 +3,13 @@ import type { ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Notice } from '../../components/Notice';
 import { formatInt, shortHex } from '../../lib/format';
-import { toFriendly } from '../../lib/errors';
 import { prefersReducedMotion } from '../../lib/motion';
 import { burnerAccount } from '../../lib/player';
 import { useArenaSocket } from '../../lib/useArenaSocket';
 import { useConfig } from '../../lib/useConfig';
-import {
-  actBattle,
-  challengeBattleAgent,
-  claimBattleTimeout,
-  joinBattle,
-} from '../../lib/battle/actions';
+import { actBattle, challengeBattleAgent, claimBattleTimeout, joinBattle } from '../../lib/battle/actions';
+import { battleErrorText } from '../../lib/battle/errors';
+import type { WalletStep } from '../../lib/battle/fund';
 import { battleMock } from '../../lib/battle/mock';
 import {
   NO_PLACE,
@@ -23,6 +19,7 @@ import {
   boardDamage,
   boardSize,
   canClaimTimeout,
+  cardAt,
   damageBetween,
   emptyBoardSlot,
   frontCard,
@@ -30,6 +27,7 @@ import {
   handCards,
   handOf,
   mySide,
+  newDrawNumbers,
   otherSide,
   pileLeft,
   sameAddress,
@@ -38,13 +36,16 @@ import {
   strikeDamage,
   turnBlocksLeft,
 } from '../../lib/battle/rules';
+import type { DrawCard } from '../../lib/battle/rules';
 import { isBattleMock, useMatch } from '../../lib/battle/useMatch';
 import type { BattleSide, MatchView } from '../../lib/battle/types';
 import { BattleResult } from './ResultOverlay';
-import { BoardCard, HandCard, Pile, ScoreDots } from './cards';
+import { BoardCard, DrawReveal, HandCard, Pile, ScoreDots } from './cards';
 import { OpenRoom } from './OpenRoom';
+import './battle.css';
 
-const DRAW_FLASH_MS = 900;
+const DRAW_REVEAL_MS = 1100;
+const FOE_DRAW_MS = 900;
 const DAMAGE_FLASH_MS = 650;
 
 type Busy = 'join' | 'attack' | 'special' | 'agent' | 'timeout' | null;
@@ -103,7 +104,7 @@ function ActionButton({
       onClick={onClick}
       className={`flex h-14 flex-col items-center justify-center rounded-card px-2 [touch-action:manipulation] disabled:opacity-40 ${look}`}
     >
-      <span className="title leading-tight">{busy ? busyLabel : label}</span>
+      <span className="text-[15px] font-semibold leading-tight">{busy ? busyLabel : label}</span>
       {!busy && amount > 0 && <span className="data leading-tight opacity-80">{formatInt(amount)} dmg</span>}
     </button>
   );
@@ -120,10 +121,12 @@ function Battle({ id }: { id: string }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [awaitingBlock, setAwaitingBlock] = useState<number | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
+  const [phase, setPhase] = useState<WalletStep>('send');
   const [error, setError] = useState<string | null>(null);
   const [damage, setDamage] = useState<{ key: number; side: BattleSide; amount: number } | null>(null);
-  const [drawing, setDrawing] = useState(false);
-  const [drawTick, setDrawTick] = useState(0);
+  const [drawn, setDrawn] = useState<{ key: number; card: DrawCard } | null>(null);
+  const [foeDraw, setFoeDraw] = useState<{ key: number; count: number } | null>(null);
+  const [newDraws, setNewDraws] = useState<number[]>([]);
   const prevMatch = useRef<MatchView | null>(null);
   const handRef = useRef<HTMLDivElement | null>(null);
 
@@ -151,7 +154,9 @@ function Battle({ id }: { id: string }) {
   const isAgent =
     side !== null &&
     match !== null &&
-    ((config !== null && sideAddress(match, otherSide(side)) !== '' && sameAddress(sideAddress(match, otherSide(side)), config.agent)) ||
+    ((config !== null &&
+      sideAddress(match, otherSide(side)) !== '' &&
+      sameAddress(sideAddress(match, otherSide(side)), config.agent)) ||
       (isBattleMock() && battleMock.isAgentMatch(id)));
   const agentLevel = arena.agent?.level;
   const topName = !match
@@ -168,6 +173,8 @@ function Battle({ id }: { id: string }) {
   const mustPlace = me !== null && boardSize(me) === 0 && hand.length > 0;
   const canAttack = canAct && (!mustPlace || selectedCard !== null);
   const canSpecial = canAttack && !specialUsed && strike > 0;
+  const newInHand = me ? newDraws.filter((drawNo) => handOf(me).includes(drawNo)) : [];
+  const walletLabel = (normal: string): string => (phase === 'wallet' ? 'Preparing your wallet…' : normal);
 
   useEffect(() => {
     const prev = prevMatch.current;
@@ -179,14 +186,19 @@ function Battle({ id }: { id: string }) {
     if (lostByP1 > 0) setDamage({ key: Date.now(), side: 1, amount: lostByP1 });
     else if (lostByP2 > 0) setDamage({ key: Date.now(), side: 2, amount: lostByP2 });
 
-    if (side !== null) {
-      const before = sideData(prev, side).drawn;
-      const after = sideData(match, side).drawn;
-      if (after > before) {
-        setDrawing(true);
-        setDrawTick((tick) => tick + 1);
-      }
+    if (side === null) return;
+
+    // The contract draws for the next player at the end of an action: the new card
+    // is already in hand when your turn starts, and stays marked NEW until you act.
+    const fresh = newDrawNumbers(prev, match, side);
+    if (fresh.length > 0) {
+      setNewDraws((current) => Array.from(new Set([...current, ...fresh])));
+      const latest = cardAt(sideData(match, side), fresh[fresh.length - 1] as number);
+      setDrawn({ key: Date.now(), card: latest });
     }
+
+    const foeFresh = newDrawNumbers(prev, match, otherSide(side));
+    if (foeFresh.length > 0) setFoeDraw({ key: Date.now(), count: foeFresh.length });
   }, [match, side]);
 
   useEffect(() => {
@@ -196,10 +208,16 @@ function Battle({ id }: { id: string }) {
   }, [damage]);
 
   useEffect(() => {
-    if (!drawing) return undefined;
-    const timer = setTimeout(() => setDrawing(false), DRAW_FLASH_MS);
+    if (!drawn) return undefined;
+    const timer = setTimeout(() => setDrawn(null), DRAW_REVEAL_MS);
     return () => clearTimeout(timer);
-  }, [drawing, drawTick]);
+  }, [drawn]);
+
+  useEffect(() => {
+    if (!foeDraw) return undefined;
+    const timer = setTimeout(() => setFoeDraw(null), FOE_DRAW_MS);
+    return () => clearTimeout(timer);
+  }, [foeDraw]);
 
   useEffect(() => {
     if (selected === null || match === null || side === null) return;
@@ -226,18 +244,20 @@ function Battle({ id }: { id: string }) {
 
   const run = async (
     kind: Exclude<Busy, null>,
-    action: () => Promise<void>,
+    action: (onStep: (step: WalletStep) => void) => Promise<void>,
     failure: string | ((err: unknown) => string),
   ) => {
     if (busy !== null) return;
     setBusy(kind);
+    setPhase('wallet');
     setError(null);
     try {
-      await action();
+      await action((step) => setPhase(step));
     } catch (err) {
       setError(typeof failure === 'string' ? failure : failure(err));
     } finally {
       setBusy(null);
+      setPhase('send');
     }
   };
 
@@ -245,14 +265,14 @@ function Battle({ id }: { id: string }) {
     if (!config || !match) return;
     void run(
       'join',
-      async () => {
-        const result = await joinBattle(config, match.id);
+      async (onStep) => {
+        const result = await joinBattle(config, match.id, onStep);
         if (result.status !== 'success') throw new Error('joinMatch reverted');
       },
       (err) =>
         err instanceof Error && err.message === 'joinMatch reverted'
           ? 'This match already started. Create a new one.'
-          : toFriendly(err, { fn: 'joinMatch' }),
+          : battleErrorText(err, { fn: 'joinMatch' }),
     );
   };
 
@@ -276,16 +296,17 @@ function Battle({ id }: { id: string }) {
     const handIdx = selectedCard !== null ? selectedCard.drawNo : NO_PLACE;
     void run(
       special ? 'special' : 'attack',
-      async () => {
-        const result = await actBattle(config, match.id, handIdx, special);
+      async (onStep) => {
+        const result = await actBattle(config, match.id, handIdx, special, onStep);
         if (result.status !== 'success') throw new Error('act reverted');
         setSelected(null);
+        setNewDraws([]);
         setAwaitingBlock(match.lastMoveBlock);
       },
       (err) =>
         err instanceof Error && err.message === 'act reverted'
           ? "That move didn't go through. The board may have changed. Try again."
-          : toFriendly(err, { fn: 'act' }),
+          : battleErrorText(err, { fn: 'act' }),
     );
   };
 
@@ -293,11 +314,14 @@ function Battle({ id }: { id: string }) {
     if (!config || !match) return;
     void run(
       'timeout',
-      async () => {
-        const result = await claimBattleTimeout(config, match.id);
+      async (onStep) => {
+        const result = await claimBattleTimeout(config, match.id, onStep);
         if (result.status !== 'success') throw new Error('claimTimeout reverted');
       },
-      'The timeout window is still open.',
+      (err) =>
+        err instanceof Error && err.message === 'claimTimeout reverted'
+          ? 'The timeout window is still open.'
+          : battleErrorText(err, { fn: 'claimTimeout' }),
     );
   };
 
@@ -329,6 +353,7 @@ function Battle({ id }: { id: string }) {
         match={match}
         side={side}
         busy={busy === 'join' || busy === 'agent' ? busy : null}
+        joinBusyLabel={walletLabel('Joining…')}
         error={error}
         onJoin={join}
         onFightAgent={fightAgent}
@@ -344,7 +369,15 @@ function Battle({ id }: { id: string }) {
     side === null
       ? { title: 'Spectating', sub: 'Both players are moving.', tone: 'neutral' as BannerTone }
       : myTurn
-        ? { title: 'Your turn', sub: selectedCard ? 'Selected. Attack to place and strike.' : 'Draw, place, then strike.', tone: 'self' as BannerTone }
+        ? {
+            title: 'Your turn',
+            sub: selectedCard
+              ? 'Selected. Place it and strike.'
+              : newDraws.length > 0
+                ? 'New card in hand. Place it or hold it.'
+                : 'Place a card or hold it, then strike.',
+            tone: 'self' as BannerTone,
+          }
         : {
             title: "Opponent's turn",
             sub: isAgent ? 'AI Agent is choosing a move.' : 'Waiting for their move.',
@@ -357,13 +390,20 @@ function Battle({ id }: { id: string }) {
       : !myTurn
         ? 'Actions unlock on your turn.'
         : selectedCard
-          ? 'Attack places the selected card, then every board card strikes.'
-          : 'Attack draws one card and strikes with your board.';
+          ? 'The selected card takes the first empty slot, then every board card strikes.'
+          : mustPlace
+            ? 'Tap a card in hand to place it before attacking.'
+            : 'Your board strikes. Cards in hand stay safe.';
+  const attackLabel = selectedCard !== null ? 'Place and attack' : 'Attack';
+  const attackAria =
+    selectedCard !== null
+      ? `Place ${selectedCard.nadmon.name} on the board and attack${strike > 0 ? `, ${strike} damage` : ''}`
+      : `Attack${strike > 0 ? `, ${strike} damage` : ''}`;
 
   return (
-    <main className="flex h-[100dvh] flex-col bg-surface text-ink">
-      <div className="mx-auto flex h-full w-full max-w-[420px] flex-col border-x border-line bg-surface">
-        <header className="border-b border-line px-4 pb-2 pt-3">
+    <main className="flex h-[100dvh] flex-col overflow-hidden bg-surface text-ink">
+      <div className="mx-auto flex h-full w-full max-w-[420px] flex-col overflow-x-hidden border-x border-line bg-surface">
+        <header className="shrink-0 border-b border-line px-4 pb-2 pt-3">
           <div className="flex items-center justify-between gap-3">
             <Link to="/battle" className="label text-ink-muted">
               ← Card Battle
@@ -390,14 +430,14 @@ function Battle({ id }: { id: string }) {
           </div>
           <div className="mt-2 h-0.5 w-full bg-surface-sunken" aria-hidden="true">
             <div
-              className="h-full bg-line"
+              className={`h-full ${myTurn ? 'bg-purple' : 'bg-berry'}`}
               style={{ width: `${Math.min(100, (blocksLeft / TURN_TIMEOUT_BLOCKS) * 100)}%` }}
             />
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto">
-          <section className="relative px-4 pt-3" aria-label="Opponent board">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+          <section className="relative px-4 pt-4" aria-label="Opponent board">
             <div className="flex items-stretch gap-2">
               <Pile count={top ? pileLeft(top) : 0} side="opponent" />
               <div className="grid flex-1 grid-cols-3 gap-2">
@@ -412,6 +452,15 @@ function Battle({ id }: { id: string }) {
                 ))}
               </div>
             </div>
+            {foeDraw && (
+              <span
+                key={`foe-draw-${foeDraw.key}`}
+                role="status"
+                className="foe-draw pointer-events-none absolute left-16 top-2 z-20 rounded-chip border border-berry bg-berry-tint px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-berry"
+              >
+                Opponent drew
+              </span>
+            )}
             {damage && damage.side === topSide && (
               <span
                 key={damage.key}
@@ -441,7 +490,7 @@ function Battle({ id }: { id: string }) {
                     key={`bottom-${i}-${card?.drawNo ?? 'empty'}`}
                     card={card}
                     side="self"
-                    target={card !== null && bottom !== null && frontSlot(bottom) === i}
+                    front={card !== null && bottom !== null && frontSlot(bottom) === i}
                     slot={i}
                   />
                 ))}
@@ -457,33 +506,34 @@ function Battle({ id }: { id: string }) {
                 -{formatInt(damage.amount)}
               </span>
             )}
-            {drawing && (
-              <span
-                key={`draw-${drawTick}`}
-                aria-hidden="true"
-                className="dmg-float absolute right-6 top-1 z-20 flex h-9 w-9 items-center justify-center rounded-chip border border-line bg-surface-raised text-[9px] font-semibold uppercase tracking-wider text-ink"
-              >
-                Draw
-              </span>
-            )}
           </section>
 
-          <section className="mt-1 flex min-h-0 flex-col px-4 pb-2" aria-label="Your hand">
+          <section className="relative mt-1 flex flex-col px-4 pb-2" aria-label={`Your hand, ${hand.length} cards`}>
             <div className="flex items-center justify-between gap-3">
               <p className="label text-ink-muted">
                 Your hand · {hand.length}
-                {me ? ` · ${pileLeft(me)} left` : ''}
+                {me ? ` · ${pileLeft(me)} in pile` : ''}
               </p>
-              {drawing ? (
+              {drawn ? (
+                <span role="status" className="label max-w-[62%] truncate text-purple-ink">
+                  You drew {drawn.card.nadmon.name}
+                </span>
+              ) : newInHand.length > 0 ? (
                 <span role="status" className="label text-purple-ink">
-                  Drawing…
+                  {newInHand.length} new
                 </span>
               ) : null}
             </div>
-            <div ref={handRef} className="mt-2 flex gap-2 overflow-x-auto pb-2">
+            <div
+              ref={handRef}
+              data-hand-scroll
+              className="mt-2 flex gap-2 overflow-x-auto overscroll-x-contain pb-2"
+            >
               {hand.length === 0 ? (
-                <p className="body text-ink-muted">
-                  {me && pileLeft(me) === 0 ? 'No cards left in this match.' : 'No cards in hand. Attack to draw.'}
+                <p className="body py-6 text-ink-muted">
+                  {me && pileLeft(me) === 0
+                    ? 'No cards left in this match.'
+                    : 'No cards in hand. Attack to strike with your board.'}
                 </p>
               ) : (
                 hand.map((card) => (
@@ -491,6 +541,7 @@ function Battle({ id }: { id: string }) {
                     key={card.drawNo}
                     card={card}
                     selected={selected === card.drawNo}
+                    isNew={newInHand.includes(card.drawNo)}
                     disabled={!myTurn || busy !== null || (me !== null && emptyBoardSlot(me) === -1)}
                     onSelect={() => {
                       if (!myTurn || busy !== null) return;
@@ -500,10 +551,11 @@ function Battle({ id }: { id: string }) {
                 ))
               )}
             </div>
+            {drawn && <DrawReveal key={drawn.key} card={drawn.card} />}
           </section>
         </div>
 
-        <footer className="mt-auto border-t border-line bg-surface px-4 pb-4 pt-3">
+        <footer className="mt-auto shrink-0 border-t border-line bg-surface px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-3">
           {error && (
             <div className="mb-2">
               <Notice>{error}</Notice>
@@ -519,27 +571,33 @@ function Battle({ id }: { id: string }) {
               Claim timeout
             </button>
           )}
-          <div className="grid grid-cols-2 gap-3">
-            <ActionButton
-              label="Attack"
-              amount={strike}
-              tone="purple"
-              disabled={!canAttack}
-              busy={busy === 'attack'}
-              busyLabel="Resolving…"
-              ariaLabel={`Attack${strike > 0 ? `, ${strike} damage` : ''}`}
-              onClick={() => act(false)}
-            />
-            <ActionButton
-              label={specialUsed ? 'Special used' : 'Special'}
-              amount={specialUsed ? 0 : specialPreview}
-              tone="deep"
-              disabled={!canSpecial || specialUsed}
-              busy={busy === 'special'}
-              busyLabel="Resolving…"
-              ariaLabel={`Special${specialPreview > 0 ? `, ${specialPreview} damage, once per match` : ', once per match'}`}
-              onClick={() => act(true)}
-            />
+          <div className="grid grid-cols-5 gap-2">
+            <div className="col-span-3">
+              <ActionButton
+                label={attackLabel}
+                amount={strike}
+                tone="purple"
+                disabled={!canAttack}
+                busy={busy === 'attack'}
+                busyLabel={walletLabel('Resolving…')}
+                ariaLabel={attackAria}
+                onClick={() => act(false)}
+              />
+            </div>
+            <div className="col-span-2">
+              <ActionButton
+                label={specialUsed ? 'Special used' : 'Special'}
+                amount={specialUsed ? 0 : specialPreview}
+                tone="deep"
+                disabled={!canSpecial || specialUsed}
+                busy={busy === 'special'}
+                busyLabel={walletLabel('Resolving…')}
+                ariaLabel={`Special${
+                  specialPreview > 0 ? `, ${specialPreview} damage, once per match` : ', once per match'
+                }`}
+                onClick={() => act(true)}
+              />
+            </div>
           </div>
           <p className="data mt-2 text-center text-ink-muted">{actionHint}</p>
         </footer>
@@ -547,4 +605,3 @@ function Battle({ id }: { id: string }) {
     </main>
   );
 }
-

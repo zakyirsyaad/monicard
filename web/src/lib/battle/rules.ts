@@ -262,6 +262,13 @@ export function isExhausted(side: SideData): boolean {
   return boardSize(side) === 0 && handCount(side) === 0 && pileLeft(side) === 0;
 }
 
+/** Draw numbers that arrived between two snapshots, for the side that just drew them. */
+export function newDrawNumbers(prev: MatchView | null, next: MatchView, side: BattleSide): number[] {
+  const before = prev === null ? 0 : clampDrawn(sideData(prev, side).drawn);
+  const after = clampDrawn(sideData(next, side).drawn);
+  return Array.from({ length: Math.max(0, after - before) }, (_, i) => before + i);
+}
+
 export function isFinal(match: MatchView): boolean {
   return match.status === 'P1Won' || match.status === 'P2Won';
 }

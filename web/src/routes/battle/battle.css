@@ -1,0 +1,67 @@
+/* Card Battle motion. Transform/opacity only; disabled under reduced motion. */
+
+/* A drawn card starts over the pile and lands above the hand. */
+.draw-card {
+  animation: draw-card 1100ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes draw-card {
+  0% {
+    opacity: 0;
+    transform: translate(calc(-50% + 130px), 96px) rotate(8deg) scale(0.62);
+  }
+  22% {
+    opacity: 1;
+  }
+  62% {
+    opacity: 1;
+    transform: translate(-50%, 0) rotate(0deg) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -14px) scale(1);
+  }
+}
+
+/* A card placed on either board deals in once. */
+.board-deal {
+  animation: board-deal 260ms ease-out both;
+}
+
+@keyframes board-deal {
+  from {
+    opacity: 0.2;
+    transform: translateY(10px) scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* The opponent's draw chip slides out of their pile and fades. */
+.foe-draw {
+  animation: foe-draw 900ms ease-out both;
+}
+
+@keyframes foe-draw {
+  0% {
+    opacity: 0;
+    transform: translate(-8px, -10px) scale(0.8);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(34px, 10px) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .draw-card,
+  .board-deal,
+  .foe-draw {
+    animation: none;
+  }
+}

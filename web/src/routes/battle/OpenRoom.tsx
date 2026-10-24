@@ -10,13 +10,15 @@ export type OpenRoomProps = {
   match: MatchView;
   side: BattleSide | null;
   busy: 'join' | 'agent' | null;
+  /** "Joining…" or "Preparing your wallet…" while /fund settles. */
+  joinBusyLabel: string;
   error: string | null;
   onJoin: () => void;
   onFightAgent: () => void;
 };
 
 /** An Open match: the creator shares a QR, everyone else joins from the same link. */
-export function OpenRoom({ match, side, busy, error, onJoin, onFightAgent }: OpenRoomProps) {
+export function OpenRoom({ match, side, busy, joinBusyLabel, error, onJoin, onFightAgent }: OpenRoomProps) {
   const [copied, setCopied] = useState(false);
   const link = `${window.location.origin}/battle/${match.id}`;
   const isCreator = side === 1;
@@ -87,7 +89,7 @@ export function OpenRoom({ match, side, busy, error, onJoin, onFightAgent }: Ope
               <span className="label text-ink-muted">Cards</span>
               <span className="data text-ink">10 draws each · onchain</span>
             </div>
-            <Button busy={busy === 'join'} busyLabel="Joining…" disabled={busy !== null} onClick={onJoin}>
+            <Button busy={busy === 'join'} busyLabel={joinBusyLabel} disabled={busy !== null} onClick={onJoin}>
               Join match
             </Button>
           </section>

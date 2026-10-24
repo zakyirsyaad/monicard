@@ -6,9 +6,13 @@ import { actionDeps } from '../player';
 import type { Config, RelayResult } from '../types';
 import { battleAbi } from './abi';
 import { readMatchCount } from './chain';
+import { ensureBattleWallet } from './fund';
+import type { WalletStep } from './fund';
 import { battleMock } from './mock';
 import { isBattleMock } from './useMatch';
 import type { AgentBattleResult } from './types';
+
+type StepHandler = (step: WalletStep) => void;
 
 /** Gas fallback when `/config` omits the battle limits (BATTLE-SPEC: 300,000 for every function). */
 const DEFAULT_GAS = 300_000;
@@ -57,15 +61,18 @@ function mockResult(status: 'success' | 'reverted'): RelayResult {
 export type CreatedBattle = { id: string | null; result: RelayResult };
 
 /** `createMatch()`; the id comes from the relay's `events.matchId`, else from `matchCount() - 1`. */
-export async function createBattle(config: Config): Promise<CreatedBattle> {
+export async function createBattle(config: Config, onStep?: StepHandler): Promise<CreatedBattle> {
   if (isBattleMock()) {
+    onStep?.('send');
     const { account } = actionDeps(config);
     const id = battleMock.createMatch(account.address);
     return { id, result: mockResult('success') };
   }
+  const deps = actionDeps(config);
+  await ensureBattleWallet(deps, onStep);
   const to = battleAddress(config);
   const data = encodeFunctionData({ abi: battleAbi, functionName: 'createMatch' });
-  const result = await sendCall(actionDeps(config), {
+  const result = await sendCall(deps, {
     fn: 'createMatch',
     to,
     data,
@@ -86,12 +93,16 @@ function relayBattle(
   return sendCall(actionDeps(config), { fn, ...call });
 }
 
-export async function joinBattle(config: Config, id: string): Promise<RelayResult> {
+export async function joinBattle(config: Config, id: string, onStep?: StepHandler): Promise<RelayResult> {
   if (isBattleMock()) {
+    onStep?.('send');
     const { account } = actionDeps(config);
     return mockResult(battleMock.joinMatch(id, account.address) ? 'success' : 'reverted');
   }
-  return relayBattle(config, 'joinMatch', {
+  const deps = actionDeps(config);
+  await ensureBattleWallet(deps, onStep);
+  return sendCall(deps, {
+    fn: 'joinMatch',
     to: battleAddress(config),
     data: encodeFunctionData({ abi: battleAbi, functionName: 'joinMatch', args: [BigInt(id)] }),
     gas: gasFor(config, 'joinMatch'),
@@ -103,12 +114,17 @@ export async function actBattle(
   id: string,
   handIdx: number,
   special: boolean,
+  onStep?: StepHandler,
 ): Promise<RelayResult> {
   if (isBattleMock()) {
+    onStep?.('send');
     const { account } = actionDeps(config);
     return mockResult(battleMock.act(id, account.address, handIdx, special).ok ? 'success' : 'reverted');
   }
-  return relayBattle(config, 'act', {
+  const deps = actionDeps(config);
+  await ensureBattleWallet(deps, onStep);
+  return sendCall(deps, {
+    fn: 'act',
     to: battleAddress(config),
     data: encodeFunctionData({
       abi: battleAbi,
@@ -119,12 +135,16 @@ export async function actBattle(
   });
 }
 
-export async function claimBattleTimeout(config: Config, id: string): Promise<RelayResult> {
+export async function claimBattleTimeout(config: Config, id: string, onStep?: StepHandler): Promise<RelayResult> {
   if (isBattleMock()) {
+    onStep?.('send');
     const { account } = actionDeps(config);
     return mockResult(battleMock.claimTimeout(id, account.address).ok ? 'success' : 'reverted');
   }
-  return relayBattle(config, 'claimTimeout', {
+  const deps = actionDeps(config);
+  await ensureBattleWallet(deps, onStep);
+  return sendCall(deps, {
+    fn: 'claimTimeout',
     to: battleAddress(config),
     data: encodeFunctionData({ abi: battleAbi, functionName: 'claimTimeout', args: [BigInt(id)] }),
     gas: gasFor(config, 'claimTimeout'),
