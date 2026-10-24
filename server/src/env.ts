@@ -53,7 +53,11 @@ const deploymentSchema = z.object({
   chainId: z.number().int().positive(),
   cards: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
   arena: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-  stakeVault: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
+  stakeVault: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .refine((value) => BigInt(value) !== 0n, 'must not be the zero address')
+    .optional(),
   battle: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
   deployBlock: z.number().int().nonnegative().optional(),
   gasLimits: z.object({
@@ -73,6 +77,11 @@ const deploymentSchema = z.object({
 });
 
 export type GasLimits = z.infer<typeof deploymentSchema>['gasLimits'];
+
+/** Test seam: validates one `deployments/<network>.json` payload without touching `.env`. */
+export function parseDeployment(raw: unknown): z.infer<typeof deploymentSchema> {
+  return deploymentSchema.parse(raw);
+}
 
 export type Env = {
   PORT: number;
@@ -135,7 +144,7 @@ function buildEnv(): Env {
   } catch (error) {
     throw new Error(`Cannot read deployment ${deploymentPath}: ${(error as Error).message}`);
   }
-  const deployment = deploymentSchema.parse(deploymentRaw);
+  const deployment = parseDeployment(deploymentRaw);
 
   return {
     ...parsed,
