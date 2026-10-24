@@ -4,7 +4,7 @@ import { describe, expect, test, vi } from 'vitest';
 // `ws` may not be installed for the server package yet; the core under test never touches it.
 vi.mock('ws', () => ({ WebSocketServer: class {} }));
 
-import { createWsHubCore, parseScope, type AgentMsg, type DuelsMsg, type StatsMsg, type WsMessage } from '../src/ws';
+import { MAX_BUFFERED_BYTES, createWsHubCore, parseScope, type AgentMsg, type DuelsMsg, type StatsMsg, type WsMessage } from '../src/ws';
 
 const duel = (id: string): DuelView =>
   ({ id, p1: '0x01', p2: '0x02', status: 'Active', settled: false }) as unknown as DuelView;
@@ -37,7 +37,7 @@ const agentMsg: AgentMsg = {
 
 function fakeSocket(readyState: number | undefined = 1) {
   const sent: string[] = [];
-  const sock: { send(d: string): void; readyState?: number } = { send: (d) => void sent.push(d) };
+  const sock: { send(d: string): void; readyState?: number; bufferedAmount?: number } = { send: (d) => void sent.push(d) };
   if (readyState !== undefined) sock.readyState = readyState;
   return { sock, sent, parsed: (): WsMessage[] => sent.map((s) => JSON.parse(s) as WsMessage) };
 }
@@ -199,5 +199,34 @@ describe('ws hub core', () => {
     core.add(a.sock, { duelId: '1' });
     core.broadcast({ type: 'leaderboard', entries: [] });
     expect(a.sent).toHaveLength(0);
+  });
+
+  test('subscribedIds lists only the duel ids of scoped connections', () => {
+    const core = createWsHubCore();
+    const [a, b, c, all] = [fakeSocket(), fakeSocket(), fakeSocket(), fakeSocket()];
+    core.add(a.sock, { duelId: '4' });
+    core.add(b.sock, { duelId: '9' });
+    core.add(c.sock, { duelId: '4' });
+    core.add(all.sock, 'all');
+    expect(core.subscribedIds()).toEqual(new Set(['4', '9']));
+    core.remove(a.sock);
+    core.remove(c.sock);
+    expect(core.subscribedIds()).toEqual(new Set(['9']));
+  });
+
+  test('a socket with more than MAX_BUFFERED_BYTES queued is skipped, and catches up once drained', () => {
+    const core = createWsHubCore();
+    const slow = fakeSocket();
+    const fast = fakeSocket();
+    core.add(slow.sock, 'all');
+    core.add(fast.sock, 'all');
+    slow.sock.bufferedAmount = MAX_BUFFERED_BYTES + 1;
+    core.broadcast(statsMsg);
+    expect(slow.sent).toHaveLength(0);
+    expect(fast.sent).toHaveLength(1);
+    expect(core.size()).toBe(2); // skipped, not dropped
+    slow.sock.bufferedAmount = MAX_BUFFERED_BYTES;
+    core.broadcast(statsMsg);
+    expect(slow.sent).toHaveLength(1);
   });
 });

@@ -3,7 +3,11 @@ import { encodeAbiParameters, encodeEventTopics, type TransactionReceipt } from 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { ChainLike } from '../src/chainTypes';
 import {
+  DUEL_COUNT_RESYNC_MS,
+  MAX_SETTLES_IN_FLIGHT,
+  MAX_SETTLE_ATTEMPTS,
   SETTLE_RETRY_BLOCKS,
+  STICKY_READS_PER_POLL,
   TREASURY_REFRESH_MS,
   activeWindow,
   getFeatured,
@@ -13,7 +17,7 @@ import {
   startPoller,
 } from '../src/poller';
 import type { ReceiptHub } from '../src/receiptHub';
-import type { ConnectCallback, WsMessage } from '../src/ws';
+import type { ConnectCallback, DuelsMsg, WsMessage } from '../src/ws';
 
 // poller.ts only imports types from ws.ts; the mock keeps the integration test independent of the `ws` package.
 vi.mock('ws', () => ({ WebSocketServer: class {} }));
@@ -60,12 +64,21 @@ describe('activeWindow', () => {
 
 describe('pickFeatured', () => {
   const bots = new Set<Hex>([BOT]);
-  test('prefers the newest duel with no bot', () => {
+  test('prefers the newest Active duel with no bot', () => {
     const duels = [
       view({ id: '3', p1: addr(1), p2: addr(2) }),
       view({ id: '9', p1: BOT, p2: addr(2) }),
       view({ id: '7', p1: addr(5), p2: ZERO, status: 'Open' }),
       view({ id: '8', p1: addr(5), p2: BOT }),
+      view({ id: '6', status: 'P1Won' }),
+    ];
+    expect(pickFeatured(duels, bots)).toBe('3');
+  });
+  test('falls back to the newest non-bot duel of any status when none is Active', () => {
+    const duels = [
+      view({ id: '3', status: 'P2Won' }),
+      view({ id: '7', p1: addr(5), p2: ZERO, status: 'Open' }),
+      view({ id: '9', p1: BOT, status: 'Active' }),
     ];
     expect(pickFeatured(duels, bots)).toBe('7');
   });
@@ -145,7 +158,12 @@ function makeHarness(opts: { duelCount?: bigint; table?: Raw[]; failCountReads?:
   const hub = { onIngest: (cb: (typeof ingestListeners)[number]) => void ingestListeners.push(cb) } as unknown as ReceiptHub;
   const connectCbs: ConnectCallback[] = [];
   const sent: WsMessage[] = [];
-  const ws = { broadcast: vi.fn((m: WsMessage) => void sent.push(m)), onConnect: (cb: ConnectCallback) => void connectCbs.push(cb) };
+  const subs = new Set<string>();
+  const ws = {
+    broadcast: vi.fn((m: WsMessage) => void sent.push(m)),
+    onConnect: (cb: ConnectCallback) => void connectCbs.push(cb),
+    subscribedIds: () => subs,
+  };
   const operator = { send: vi.fn(async () => '0xabc' as Hex) };
   const agentMsg = { current: null as WsMessage | null };
   const stats = { snapshot: vi.fn(() => ({ txTotal: 5, txPerSec: 1.5, avgLatencyMs: 40, lastTxHash: '0xdead' as Hex })) };
@@ -156,7 +174,7 @@ function makeHarness(opts: { duelCount?: bigint; table?: Raw[]; failCountReads?:
   });
 
   return {
-    state, client, ws, sent, operator, poller, getDuelsCalls, agentMsg, stats, connectCbs,
+    state, client, ws, sent, subs, operator, poller, getDuelsCalls, agentMsg, stats, connectCbs,
     maxRunning: () => maxRunning,
     ingest: (block: number, receipts: TransactionReceipt[] = []) => ingestListeners.forEach((cb) => cb(BigInt(block), receipts)),
     types: (t: string) => sent.filter((m) => m.type === t),
@@ -200,13 +218,13 @@ describe('startPoller', () => {
     expect(h.poller.latestBlock()).toBe(10);
   });
 
-  test('broadcasts stats with zeroed leaderboard-derived fields and the last tx hash', async () => {
+  test('broadcasts stats with zeroed leaderboard-derived fields, the treasury and the last tx hash', async () => {
     h = makeHarness();
     h.ingest(500);
     await flush(h, 1);
     expect(h.types('stats')[0]).toEqual({
       type: 'stats', block: '500', txTotal: 5, txPerSec: 1.5, avgLatencyMs: 40, lastTxHash: '0xdead',
-      uniquePlayers: 0, totalDuels: 0, treasury: '0',
+      uniquePlayers: 0, totalDuels: 0, treasury: '777',
     });
   });
 
@@ -227,6 +245,14 @@ describe('startPoller', () => {
     h.ingest(501);
     await flush(h, 2);
     expect(h.types('duels')[1]).toMatchObject({ featuredId: '2' });
+  });
+
+  test('an admin-featured id that is not in the snapshot falls back to the automatic pick', async () => {
+    h = makeHarness();
+    setFeatured('999');
+    h.ingest(500);
+    await flush(h, 1);
+    expect(h.types('duels')[0]).toMatchObject({ featuredId: '2' });
   });
 
   test('bumps duelCount from DuelCreated logs so the next window includes the new duel', async () => {
@@ -463,5 +489,254 @@ describe('snapshot on connect', () => {
     const parsed = sent.map((s) => JSON.parse(s) as WsMessage);
     expect(parsed.map((m) => m.type)).toEqual(['duels', 'stats']);
     expect((parsed[0] as { duels: { id: string }[] }).duels.map((d) => d.id)).toEqual(['1']);
+  });
+});
+
+// ------------------------------------------------------------------ fix round 1
+
+const tick = () => new Promise<void>((r) => setTimeout(r, 0));
+const bigTable = (n: number, over: (i: number) => Partial<DuelView> = () => ({})): Raw[] =>
+  Array.from({ length: n }, (_, i) => raw({ id: String(i), endBlock: 99_999, ...over(i) }));
+const settleCalls = (h: Harness) => h.operator.send.mock.calls as unknown as [{ data: Hex }][];
+const singleReads = (h: Harness) => h.getDuelsCalls.filter((c) => c.count === 1n).map((c) => Number(c.from));
+const idsOf = (m: WsMessage | undefined) => (m as DuelsMsg).duels.map((d) => d.id);
+
+describe('sticky duels (subscribed duels that leave the 64-window)', () => {
+  let h: Harness;
+  afterEach(() => h?.poller.stop());
+
+  /** 60 duels exist (window 0..59), then 10 more are created: duels 0..5 leave the window. */
+  async function evictFromWindow(table: Raw[]): Promise<void> {
+    h = makeHarness({ duelCount: 60n, table });
+    h.subs.add('5');
+    h.ingest(500);
+    await flush(h, 1);
+    h.ingest(501, [duelCreatedReceipt(69n, 501n)]);
+    await flush(h, 2);
+  }
+
+  test('an unsettled subscribed duel keeps being sent and re-read after it leaves the window', async () => {
+    await evictFromWindow(bigTable(70, (i) => (i === 5 ? { status: 'Open', p2: ZERO } : {})));
+    expect(h.getDuelsCalls.at(-1)).toEqual({ from: 5n, count: 1n } satisfies { from: bigint; count: bigint });
+    const second = h.types('duels')[1]!;
+    expect(idsOf(second)).toContain('5');
+    expect(idsOf(second)).toHaveLength(65); // 64 window duels + the sticky one
+    expect(h.poller.getDuel('5')?.status).toBe('Open');
+    h.state.table = bigTable(70, (i) => (i === 5 ? { status: 'Active' } : {}));
+    h.ingest(502);
+    await flush(h, 3);
+    expect(h.poller.getDuel('5')?.status).toBe('Active');
+    expect(singleReads(h)).toEqual([5, 5]);
+  });
+
+  test('a settled subscribed duel is reused without any RPC', async () => {
+    await evictFromWindow(bigTable(70, (i) => (i === 5 ? { status: 'P1Won', settled: true } : {})));
+    h.ingest(502);
+    await flush(h, 3);
+    expect(singleReads(h)).toEqual([]);
+    expect(idsOf(h.types('duels')[2])).toContain('5');
+    expect(h.poller.getDuel('5')?.settled).toBe(true);
+  });
+
+  test('is dropped once settled and no longer subscribed', async () => {
+    await evictFromWindow(bigTable(70, (i) => (i === 5 ? { status: 'P1Won', settled: true } : {})));
+    h.subs.delete('5');
+    h.ingest(502);
+    await flush(h, 3);
+    expect(h.poller.getDuel('5')).toBeUndefined();
+    expect(idsOf(h.types('duels')[2])).not.toContain('5');
+  });
+
+  test('an unsubscribed Open duel outside the window is dropped (nothing to settle)', async () => {
+    await evictFromWindow(bigTable(70, (i) => (i === 5 ? { status: 'Open', p2: ZERO } : {})));
+    h.subs.delete('5');
+    h.ingest(502);
+    await flush(h, 3);
+    expect(h.poller.getDuel('5')).toBeUndefined();
+  });
+
+  test('a subscribed duel never seen in the window is fetched with getDuels(id, 1)', async () => {
+    h = makeHarness({ duelCount: 100n, table: bigTable(100) });
+    h.subs.add('10');
+    h.ingest(500);
+    await flush(h, 1);
+    expect(idsOf(h.types('duels')[0])).toContain('10');
+    expect(singleReads(h)).toEqual([10]);
+  });
+
+  test('a subscription to a duel that does not exist yet or is not numeric costs no RPC', async () => {
+    h = makeHarness({ duelCount: 100n, table: bigTable(100) });
+    h.subs.add('5000');
+    h.subs.add('abc');
+    h.ingest(500);
+    await flush(h, 1);
+    expect(singleReads(h)).toEqual([]);
+  });
+
+  test('re-reads are capped per poll and the newest ids win', async () => {
+    h = makeHarness({ duelCount: 100n, table: bigTable(100) });
+    for (let i = 0; i < 12; i++) h.subs.add(String(i));
+    h.ingest(500);
+    await flush(h, 1);
+    expect(STICKY_READS_PER_POLL).toBe(8);
+    expect(singleReads(h).sort((a, b) => a - b)).toEqual([4, 5, 6, 7, 8, 9, 10, 11]);
+  });
+
+  test('an unsubscribed duel that finishes outside the window is still settled', async () => {
+    h = makeHarness({ duelCount: 60n, table: bigTable(70, (i) => (i === 5 ? { endBlock: 600 } : {})) });
+    h.ingest(500);
+    await flush(h, 1);
+    expect(h.operator.send).not.toHaveBeenCalled();
+    h.ingest(520, [duelCreatedReceipt(69n, 520n)]); // duel 5 leaves the window while still running
+    await flush(h, 2);
+    expect(singleReads(h)).toEqual([]); // running, unsubscribed: no RPC
+    h.state.table = bigTable(70, (i) => (i === 5 ? { endBlock: 600, status: 'P1Won' } : {}));
+    h.ingest(601);
+    await flush(h, 3);
+    await vi.waitFor(() => expect(h.operator.send).toHaveBeenCalledTimes(1));
+    expect(settleCalls(h)[0]![0].data.endsWith('5'.padStart(64, '0'))).toBe(true);
+    expect(singleReads(h)).toEqual([5]); // past endBlock: re-read to learn when settle lands
+    expect(h.poller.getDuel('5')?.status).toBe('P1Won');
+    expect(idsOf(h.types('duels')[2])).not.toContain('5'); // cached, but not broadcast (nobody subscribed)
+  });
+
+  test('scoped sockets still receive the sticky duel through the hub filter', async () => {
+    const { createWsHubCore } = await import('../src/ws');
+    await evictFromWindow(bigTable(70, (i) => (i === 5 ? { status: 'Open', p2: ZERO } : {})));
+    const core = createWsHubCore();
+    core.onConnect(h.connectCbs[0]!);
+    const out: string[] = [];
+    core.add({ send: (d) => void out.push(d), readyState: 1 }, { duelId: '5' });
+    const duels = (JSON.parse(out[0]!) as DuelsMsg).duels;
+    expect(duels.map((d) => d.id)).toEqual(['5']);
+  });
+});
+
+describe('settle in flight, backoff and caps', () => {
+  let h: Harness;
+  afterEach(() => h?.poller.stop());
+  const one = (): Raw[] => [raw({ id: '0', status: 'P1Won' })];
+
+  test('stays in flight while operator.send is pending, then waits SETTLE_RETRY_BLOCKS from resolution', async () => {
+    h = makeHarness({ duelCount: 1n, table: one() });
+    const resolvers: (() => void)[] = [];
+    h.operator.send.mockImplementation(() => new Promise<Hex>((res) => resolvers.push(() => res('0x1' as Hex))));
+    h.ingest(500);
+    await flush(h, 1);
+    for (const [i, block] of [520, 600, 900].entries()) {
+      h.ingest(block);
+      await flush(h, i + 2);
+    }
+    expect(h.operator.send).toHaveBeenCalledTimes(1);
+    resolvers[0]!();
+    await tick();
+    h.ingest(900 + SETTLE_RETRY_BLOCKS - 1);
+    await flush(h, 5);
+    expect(h.operator.send).toHaveBeenCalledTimes(1);
+    h.ingest(900 + SETTLE_RETRY_BLOCKS);
+    await flush(h, 6);
+    expect(h.operator.send).toHaveBeenCalledTimes(2);
+  });
+
+  test('backs off 10 -> 20 -> 40 blocks and gives up after MAX_SETTLE_ATTEMPTS (logged once)', async () => {
+    h = makeHarness({ duelCount: 1n, table: one() });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let polls = 0;
+    const pollAt = async (block: number) => {
+      h.ingest(block);
+      await flush(h, ++polls);
+      await tick();
+    };
+    await pollAt(500); // attempt 1
+    await pollAt(509);
+    expect(h.operator.send).toHaveBeenCalledTimes(1);
+    await pollAt(510); // attempt 2, next wait 20
+    await pollAt(529);
+    expect(h.operator.send).toHaveBeenCalledTimes(2);
+    await pollAt(530); // attempt 3, next wait 40
+    await pollAt(569);
+    expect(h.operator.send).toHaveBeenCalledTimes(3);
+    await pollAt(570); // attempt 4, wait 80
+    await pollAt(650); // attempt 5, wait 160
+    expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLE_ATTEMPTS);
+    await pollAt(809);
+    expect(errors.mock.calls.filter(([m]) => String(m).includes('giving up'))).toHaveLength(0);
+    await pollAt(810);
+    await pollAt(2000);
+    await pollAt(9000);
+    expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLE_ATTEMPTS);
+    expect(errors.mock.calls.filter(([m]) => String(m).includes('giving up'))).toHaveLength(1);
+  });
+
+  test('caps concurrently pending settles at MAX_SETTLES_IN_FLIGHT', async () => {
+    const table = Array.from({ length: 12 }, (_, i) => raw({ id: String(i), status: 'P1Won' }));
+    h = makeHarness({ duelCount: 12n, table });
+    const resolvers: (() => void)[] = [];
+    h.operator.send.mockImplementation(() => new Promise<Hex>((res) => resolvers.push(() => res('0x1' as Hex))));
+    h.ingest(500);
+    await flush(h, 1);
+    h.ingest(501);
+    await flush(h, 2);
+    expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLES_IN_FLIGHT);
+    resolvers[0]!();
+    await tick();
+    h.ingest(502);
+    await flush(h, 3);
+    expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLES_IN_FLIGHT + 1);
+    const ids = new Set(settleCalls(h).map(([r]) => r.data.slice(-2)));
+    expect(ids.size).toBe(MAX_SETTLES_IN_FLIGHT + 1); // no duplicates
+  });
+});
+
+describe('duelCount resync and failed polls', () => {
+  let h: Harness;
+  afterEach(() => h?.poller.stop());
+  const countReads = (x: Harness) => x.client.readContract.mock.calls.filter(([p]) => p.functionName === 'duelCount').length;
+
+  test('re-reads duelCount every DUEL_COUNT_RESYNC_MS and takes the max', async () => {
+    h = makeHarness({ duelCount: 3n, table: bigTable(5) });
+    h.ingest(500);
+    await flush(h, 1);
+    expect(countReads(h)).toBe(1);
+    h.state.duelCount = 5n; // two DuelCreated logs were missed
+    h.state.clock = DUEL_COUNT_RESYNC_MS - 1;
+    h.ingest(501);
+    await flush(h, 2);
+    expect(countReads(h)).toBe(1);
+    h.state.clock = DUEL_COUNT_RESYNC_MS;
+    h.ingest(502);
+    await flush(h, 3);
+    await vi.waitFor(() => expect(countReads(h)).toBe(2));
+    h.ingest(503);
+    await flush(h, 4);
+    expect(h.getDuelsCalls.at(-1)).toEqual({ from: 0n, count: 5n });
+  });
+
+  test('the resync never lowers the local count', async () => {
+    h = makeHarness({ duelCount: 3n, table: bigTable(5) });
+    h.ingest(500, [duelCreatedReceipt(4n, 500n)]);
+    await flush(h, 1);
+    h.state.clock = DUEL_COUNT_RESYNC_MS;
+    h.ingest(501);
+    await flush(h, 2);
+    await vi.waitFor(() => expect(countReads(h)).toBe(2));
+    h.ingest(502);
+    await flush(h, 3);
+    expect(h.getDuelsCalls.at(-1)).toEqual({ from: 0n, count: 5n });
+  });
+
+  test('a failed poll still broadcasts stats with the triggering block, but no duels', async () => {
+    h = makeHarness();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    h.ingest(500);
+    await flush(h, 1);
+    h.state.getDuelsImpl = async () => {
+      throw new Error('rpc timeout');
+    };
+    h.ingest(501);
+    await vi.waitFor(() => expect(h.types('stats')).toHaveLength(2));
+    expect(h.types('stats')[1]).toMatchObject({ block: '501', txTotal: 5 });
+    expect(h.types('duels')).toHaveLength(1);
+    expect(h.poller.latestBlock()).toBe(500);
   });
 });

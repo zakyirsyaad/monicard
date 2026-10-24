@@ -49,7 +49,7 @@ export type WsScope = 'all' | { duelId: string };
 export type ConnectCallback = (send: (msg: WsMessage) => void, scope: WsScope) => void;
 
 /** Minimal socket surface; `ws` WebSocket instances satisfy it structurally. */
-export type WsSocketLike = { send(data: string): void; readyState?: number };
+export type WsSocketLike = { send(data: string): void; readyState?: number; bufferedAmount?: number };
 
 export type WsHubCore = {
   add(sock: WsSocketLike, scope: WsScope): void;
@@ -57,10 +57,14 @@ export type WsHubCore = {
   broadcast(msg: WsMessage): void;
   onConnect(cb: ConnectCallback): void;
   size(): number;
+  /** Duel ids that scoped connections are subscribed to. */
+  subscribedIds(): Set<string>;
 };
 
 export const WS_PATH = '/ws';
 export const PING_INTERVAL_MS = 30_000;
+/** A socket with more than this queued is skipped: every `duels` message is a full snapshot, so the next one catches up. */
+export const MAX_BUFFERED_BYTES = 65_536;
 /** readyState value of an OPEN WebSocket. */
 const READY_STATE_OPEN = 1;
 const MAX_DUEL_ID_DIGITS = 20;
@@ -107,7 +111,7 @@ export function createWsHubCore(): WsHubCore {
 
   /** Sends to an open socket; a socket whose send throws is dropped. */
   function trySend(sock: WsSocketLike, payload: string): void {
-    if (!isOpen(sock)) return;
+    if (!isOpen(sock) || (sock.bufferedAmount ?? 0) > MAX_BUFFERED_BYTES) return;
     try {
       sock.send(payload);
     } catch {
@@ -149,12 +153,14 @@ export function createWsHubCore(): WsHubCore {
     broadcast,
     onConnect: (cb) => void connectCallbacks.push(cb),
     size: () => sockets.size,
+    subscribedIds: () => new Set([...sockets.values()].flatMap((scope) => (scope === 'all' ? [] : [scope.duelId]))),
   };
 }
 
 export type WsHub = {
   broadcast(msg: WsMessage): void;
   onConnect(cb: ConnectCallback): void;
+  subscribedIds(): Set<string>;
   close(): void;
 };
 
@@ -195,6 +201,7 @@ export function createWsHub(server: Server): WsHub {
   return {
     broadcast: core.broadcast,
     onConnect: core.onConnect,
+    subscribedIds: core.subscribedIds,
     close() {
       clearInterval(pinger);
       wss.close();

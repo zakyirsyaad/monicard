@@ -9,8 +9,16 @@ import type { AgentMsg, ConnectCallback, DuelsMsg, StatsMsg, WsMessage } from '.
 export const ACTIVE_WINDOW_SIZE = 64;
 /** The NadCards balance (treasury) is read at most this often. */
 export const TREASURY_REFRESH_MS = 10_000;
-/** A settle that is still not visible on chain after this many blocks may be sent again. */
+/** First wait (in blocks) before a settle whose send finished but is still not visible is sent again; doubles per attempt. */
 export const SETTLE_RETRY_BLOCKS = 10;
+/** After this many sends for one duel the poller gives up on it (logged once). */
+export const MAX_SETTLE_ATTEMPTS = 5;
+/** Settle sends whose operator.send promise is still pending; the rest wait for the next poll. */
+export const MAX_SETTLES_IN_FLIGHT = 8;
+/** `duelCount()` is re-read this often (alongside the treasury) to heal missed DuelCreated logs. */
+export const DUEL_COUNT_RESYNC_MS = 10_000;
+/** Duels outside the window that are re-read (`getDuels(id, 1)`) per poll. */
+export const STICKY_READS_PER_POLL = 8;
 /** Poll/startup errors are logged at most once per this interval. */
 export const POLL_ERROR_LOG_MS = 60_000;
 const DEFAULT_RETRY_MS = 250;
@@ -41,21 +49,28 @@ export function getFeatured(): string | null {
   return featuredOverride;
 }
 
-/** Newest duel (highest id) in which neither player is a bot. The AI Agent is not a bot. */
+const newestId = (duels: readonly DuelView[]): string | null =>
+  duels.reduce<bigint | null>((best, d) => (best === null || BigInt(d.id) > best ? BigInt(d.id) : best), null)?.toString() ??
+  null;
+
+/**
+ * Newest Active duel in which neither player is a bot, else the newest non-bot duel of any status.
+ * The AI Agent is not a bot.
+ */
 export function pickFeatured(duels: readonly DuelView[], bots: ReadonlySet<Hex>): string | null {
-  let best: bigint | null = null;
-  for (const d of duels) {
-    if (bots.has(d.p1.toLowerCase() as Hex) || bots.has(d.p2.toLowerCase() as Hex)) continue;
-    const id = BigInt(d.id);
-    if (best === null || id > best) best = id;
-  }
-  return best === null ? null : best.toString();
+  const human = duels.filter((d) => !bots.has(d.p1.toLowerCase() as Hex) && !bots.has(d.p2.toLowerCase() as Hex));
+  return newestId(human.filter((d) => d.status === 'Active')) ?? newestId(human);
 }
 
 export type PollerDeps = {
   chain: ChainLike;
   hub: ReceiptHub;
-  ws: { broadcast(m: WsMessage): void; onConnect(cb: ConnectCallback): void };
+  ws: {
+    broadcast(m: WsMessage): void;
+    onConnect(cb: ConnectCallback): void;
+    /** Duel ids that scoped (phone) connections are subscribed to; keeps them out of the eviction window. */
+    subscribedIds?(): ReadonlySet<string>;
+  };
   stats: { snapshot(): StatsSnapshot };
   arena: Hex;
   cards: Hex;
@@ -79,6 +94,14 @@ export type Poller = {
   stop(): void;
 };
 
+type SettleState = { attempts: number; pending: boolean; retryAt: number; gaveUp: boolean };
+
+const NO_IDS: ReadonlySet<string> = new Set();
+const isDecimalId = (id: string): boolean => /^\d{1,20}$/.test(id);
+const byIdAscending = (a: DuelView, b: DuelView): number => (BigInt(a.id) < BigInt(b.id) ? -1 : 1);
+/** Blocks to wait after the `attempts`-th settle send finished: 10, 20, 40, ... */
+const settleBackoff = (attempts: number): number => SETTLE_RETRY_BLOCKS * 2 ** (attempts - 1);
+
 export function startPoller(deps: PollerDeps): Poller {
   const { chain, ws, arena, cards } = deps;
   const arenaLower = arena.toLowerCase();
@@ -89,7 +112,9 @@ export function startPoller(deps: PollerDeps): Poller {
   let ready = false;
   let running = false;
   let pendingBlock: bigint | null = null;
+  let latestSeen = 0;
   let knownCount = 0n;
+  /** Window duels plus "sticky" duels that left the window but are subscribed or still need settling. */
   let cache = new Map<string, DuelView>();
   let created = new Map<string, number>();
   let snapshotBlock = 0;
@@ -97,9 +122,10 @@ export function startPoller(deps: PollerDeps): Poller {
   let lastStats: StatsMsg | null = null;
   let treasury = '0';
   let treasuryAt: number | null = null;
+  let countAt = 0;
   let lastErrorLogAt: number | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
-  const settleInFlight = new Map<string, number>();
+  const settleState = new Map<string, SettleState>();
   const settleErrorsLogged = new Set<string>();
 
   function logError(what: string, err: unknown): void {
@@ -141,63 +167,171 @@ export function startPoller(deps: PollerDeps): Poller {
       .catch((err: unknown) => logError('treasury read failed', err));
   }
 
-  function sendSettle(id: string): void {
+  /** Heals a duelCount that missed DuelCreated logs (e.g. a watcher gap); the count never shrinks. */
+  function resyncDuelCount(): void {
+    if (now() - countAt < DUEL_COUNT_RESYNC_MS) return;
+    countAt = now();
+    readCount()
+      .then((onChain) => {
+        if (onChain > knownCount) knownCount = onChain;
+      })
+      .catch((err: unknown) => logError('duelCount resync failed', err));
+  }
+
+  // ------------------------------------------------------------------ sticky duels
+
+  /** Does a duel outside the window still deserve a cache slot? */
+  function keepSticky(d: DuelView, subs: ReadonlySet<string>): boolean {
+    if (subs.has(d.id)) return true;
+    return d.status !== 'Open' && !d.settled && !settleState.get(d.id)?.gaveUp;
+  }
+
+  async function readOne(id: string): Promise<DuelView | null> {
+    try {
+      return decodeDuels(await readDuels(BigInt(id), 1n), BigInt(id))[0] ?? null;
+    } catch (err) {
+      logError(`getDuels(${id}, 1) failed`, err);
+      return null;
+    }
+  }
+
+  /**
+   * Ids to re-read, subscribed first, then newest first, capped. Subscribed duels are read every poll until
+   * settled; unsubscribed ones only once they are finished or past endBlock (to learn that settle landed).
+   */
+  function pickReads(ids: string[], views: Map<string, DuelView>, subs: ReadonlySet<string>, block: number): string[] {
+    const due = (id: string): boolean => {
+      const d = views.get(id);
+      if (!d) return true;
+      return !d.settled && (subs.has(id) || FINISHED.has(d.status) || block >= d.endBlock);
+    };
+    return ids
+      .filter(due)
+      .sort((a, b) => Number(subs.has(b)) - Number(subs.has(a)) || (BigInt(a) < BigInt(b) ? 1 : -1))
+      .slice(0, STICKY_READS_PER_POLL);
+  }
+
+  /**
+   * Duels that left the 64-window. A phone's reducer replaces its duel map with every `duels` message, so a
+   * subscribed duel must keep being sent. Settled ones reuse their last view; the rest are re-read (see pickReads).
+   */
+  async function resolveSticky(
+    window: ReadonlyMap<string, DuelView>,
+    subs: ReadonlySet<string>,
+    block: number,
+  ): Promise<Map<string, DuelView>> {
+    const views = new Map<string, DuelView>();
+    for (const [id, d] of cache) if (!window.has(id)) views.set(id, d);
+    const known = (id: string): boolean => isDecimalId(id) && BigInt(id) < knownCount;
+    const wanted = new Set([...views.keys(), ...[...subs].filter((id) => !window.has(id) && known(id))]);
+    const ids = [...wanted].filter((id) => subs.has(id) || (views.has(id) && keepSticky(views.get(id)!, subs)));
+    const reads = pickReads(ids, views, subs, block);
+    const fresh = await Promise.all(reads.map(readOne));
+    const next = new Map<string, DuelView>();
+    for (const id of ids) {
+      const d = fresh[reads.indexOf(id)] ?? views.get(id);
+      if (d && keepSticky(d, subs)) next.set(id, d);
+    }
+    return next;
+  }
+
+  // ------------------------------------------------------------------ settle
+
+  function startSettle(id: string, attempts: number): void {
+    const state: SettleState = { attempts, pending: true, retryAt: Number.POSITIVE_INFINITY, gaveUp: false };
+    settleState.set(id, state);
     const data = encodeFunctionData({ abi: blitzArenaAbi, functionName: 'settle', args: [BigInt(id)] });
-    deps.operator.send({ to: arena, data, gas: deps.settleGas }).catch((err: unknown) => {
-      if (settleErrorsLogged.has(id)) return;
-      settleErrorsLogged.add(id);
-      console.error(`poller: settle(${id}) send failed`, err);
-    });
+    let sent: Promise<unknown>;
+    try {
+      sent = deps.operator.send({ to: arena, data, gas: deps.settleGas });
+    } catch (err) {
+      sent = Promise.reject(err);
+    }
+    sent
+      .catch((err: unknown) => {
+        if (settleErrorsLogged.has(id)) return;
+        settleErrorsLogged.add(id);
+        console.error(`poller: settle(${id}) send failed`, err);
+      })
+      .finally(() => {
+        // The retry wait only starts once the send is over, so a slow queue never causes duplicates.
+        state.pending = false;
+        state.retryAt = latestSeen + settleBackoff(attempts);
+      });
   }
 
-  function settleDue(duels: readonly DuelView[], block: number): void {
-    const byId = new Map(duels.map((d) => [d.id, d]));
-    for (const [id, sentAt] of settleInFlight) {
+  function dropFinishedSettleState(byId: ReadonlyMap<string, DuelView>): void {
+    for (const [id, st] of settleState) {
       const d = byId.get(id);
-      if (!d || d.settled || block - sentAt >= SETTLE_RETRY_BLOCKS) settleInFlight.delete(id);
-    }
-    for (const id of selectSettleable(duels, block)) {
-      if (settleInFlight.has(id)) continue;
-      settleInFlight.set(id, block);
-      sendSettle(id);
+      if (d?.settled || (!d && !st.pending)) settleState.delete(id);
     }
   }
 
-  /** Publishes a successfully read snapshot: cache and block number move together (never block-ahead-of-cache). */
-  function publish(duels: DuelView[], from: bigint, block: bigint): void {
-    cache = new Map(duels.map((d) => [d.id, d]));
-    created = new Map([...created].filter(([id]) => BigInt(id) >= from));
+  function settleDue(views: readonly DuelView[], block: number): void {
+    dropFinishedSettleState(new Map(views.map((d) => [d.id, d])));
+    let pending = [...settleState.values()].filter((st) => st.pending).length;
+    for (const id of selectSettleable(views, block)) {
+      const st = settleState.get(id);
+      if (st && (st.pending || st.gaveUp || block < st.retryAt)) continue;
+      if (st && st.attempts >= MAX_SETTLE_ATTEMPTS) {
+        st.gaveUp = true;
+        console.error(`poller: giving up on settle(${id}) after ${st.attempts} attempts`);
+        continue;
+      }
+      if (pending >= MAX_SETTLES_IN_FLIGHT) return;
+      startSettle(id, (st?.attempts ?? 0) + 1);
+      pending += 1;
+    }
+  }
+
+  // ------------------------------------------------------------------ polling
+
+  const statsMsg = (block: bigint): StatsMsg => ({
+    type: 'stats',
+    block: block.toString(),
+    ...deps.stats.snapshot(),
+    uniquePlayers: 0,
+    totalDuels: 0,
+    treasury,
+  });
+
+  /** Publishes a successfully read snapshot: cache and block move together (never block-ahead-of-cache). */
+  function publish(window: DuelView[], sticky: Map<string, DuelView>, from: bigint, block: bigint): void {
+    cache = new Map([...sticky, ...window.map((d): [string, DuelView] => [d.id, d])]);
+    created = new Map([...created].filter(([id]) => BigInt(id) >= from || sticky.has(id)));
     snapshotBlock = Number(block);
   }
 
-  function broadcastSnapshot(duels: DuelView[], block: bigint): void {
+  function broadcastSnapshot(window: DuelView[], sticky: Map<string, DuelView>, subs: ReadonlySet<string>, block: bigint): void {
     const bots = new Set(deps.bots().map((b) => b.toLowerCase() as Hex));
-    refreshTreasury();
-    lastDuels = { type: 'duels', block: block.toString(), duels, featuredId: getFeatured() ?? pickFeatured(duels, bots) };
-    lastStats = {
-      type: 'stats',
-      block: block.toString(),
-      ...deps.stats.snapshot(),
-      uniquePlayers: 0,
-      totalDuels: 0,
-      treasury,
-    };
+    const shown = [...[...sticky.values()].filter((d) => subs.has(d.id)).sort(byIdAscending), ...window];
+    const override = getFeatured();
+    const featuredId = override !== null && shown.some((d) => d.id === override) ? override : pickFeatured(window, bots);
+    lastDuels = { type: 'duels', block: block.toString(), duels: shown, featuredId };
+    lastStats = statsMsg(block);
     ws.broadcast(lastDuels);
     ws.broadcast(lastStats);
   }
 
   async function pollOnce(block: bigint): Promise<void> {
+    refreshTreasury();
+    resyncDuelCount();
     const { from, count } = activeWindow(knownCount);
-    let duels: DuelView[];
+    let window: DuelView[];
+    let sticky: Map<string, DuelView>;
+    const subs = ws.subscribedIds?.() ?? NO_IDS;
     try {
-      duels = count === 0n ? [] : decodeDuels(await readDuels(from, count), from);
+      window = count === 0n ? [] : decodeDuels(await readDuels(from, count), from);
+      sticky = await resolveSticky(new Map(window.map((d) => [d.id, d])), subs, Number(block));
     } catch (err) {
       logError('getDuels failed', err);
+      lastStats = statsMsg(block); // keep screens' clocks moving; duels stay at the last good snapshot
+      ws.broadcast(lastStats);
       return;
     }
-    publish(duels, from, block);
-    broadcastSnapshot(duels, block);
-    settleDue(duels, Number(block));
+    publish(window, sticky, from, block);
+    broadcastSnapshot(window, sticky, subs, block);
+    settleDue([...cache.values()], Number(block));
   }
 
   async function drain(): Promise<void> {
@@ -214,6 +348,7 @@ export function startPoller(deps: PollerDeps): Poller {
 
   /** Never overlaps: a trigger during a running poll only remembers the newest block. */
   function requestPoll(block: bigint): void {
+    if (Number(block) > latestSeen) latestSeen = Number(block);
     if (pendingBlock === null || block > pendingBlock) pendingBlock = block;
     if (running || !ready || stopped) return;
     running = true;
@@ -226,6 +361,7 @@ export function startPoller(deps: PollerDeps): Poller {
       try {
         const onChain = await readCount();
         if (onChain > knownCount) knownCount = onChain;
+        countAt = now();
         ready = true;
         if (pendingBlock !== null) requestPoll(pendingBlock);
         return;
@@ -255,7 +391,7 @@ export function startPoller(deps: PollerDeps): Poller {
   return {
     getDuel: (id) => cache.get(id),
     createdBlock: (id) => created.get(id),
-    duels: () => [...cache.values()].sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1)),
+    duels: () => [...cache.values()].sort(byIdAscending),
     latestBlock: () => snapshotBlock,
     stop() {
       stopped = true;
