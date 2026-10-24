@@ -158,7 +158,7 @@ Unit cost: one Card Battle action costs about 101,000 gas, roughly 0.01 MON at 1
 - **Demo video:** https://youtu.be/N-FRL6CPAis
 - **Launch post on X:** https://x.com/0xKayz_/status/2113913855734862058
 - **LinkedIn post:** https://lnkd.in/p/gB2QTGnT
-- **Showreel / ad video:** `marketing/showreel/monicard-battle-ad-1920x1080-60fps.mp4` (landscape) and `monicard-battle-ad-1080x1920-60fps.mp4` (vertical), rendered from `marketing/showreel/battle.html`.
+- **Showreel / ad video:** `marketing/showreel/monicard-battle-ad-1920x1080-60fps.mp4` (landscape) and `monicard-battle-ad-1080x1920-60fps.mp4` (vertical).
 - **Pitch script:** `marketing/pitch.md`.
 - **Specs:** `docs/BATTLE-SPEC.md` (Card Battle rules and contract), `docs/design-system/` (brand book, tokens, Nadmon art).
 
