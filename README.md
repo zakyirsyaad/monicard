@@ -99,7 +99,7 @@ Repo layout: `contracts/` (Foundry), `shared/` (game formulas + ABIs), `server/`
 | Staked duels | Both players stake MON, the winner takes the pot minus a 5% rake to the treasury | Live in Tap Blitz (`StakeVault`); Card Battle staking is next |
 | Season pass and cosmetics | Players | Roadmap |
 
-Unit cost: one Card Battle action costs about 101,000 gas, roughly 0.01 MON at 102 gwei. Onboarding a player costs less than a sticker.
+Unit cost: one Card Battle action costs about 101,000 gas, roughly 0.01 MON at 102 gwei, so a full match is about 0.2 MON in gas across both players. In event mode the organiser's package funds that gas through the relay; packs and stake rake are upside on top.
 
 ## What's new / Why Monad
 
