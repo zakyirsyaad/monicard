@@ -23,8 +23,10 @@ const TRANSFER_GAS = 21_000n;
 const FEE_HEADROOM = 2n; // walletQueue signs maxFee = 2 x gasPrice
 const FREE_PULL_N9_BLOCKS = 3n; // N9: a funded wallet cannot send for 3 blocks
 const PULL_CONCURRENCY = 5;
+const SWEEP_CONCURRENCY = 5;
 const READ_CONCURRENCY = 5;
 const BLOCK_POLL_MS = 300;
+const BLOCK_WAIT_TIMEOUT_MS = 60_000;
 const RECEIPT_POLL_MS = 300;
 const RECEIPT_TIMEOUT_MS = 30_000;
 const EXPLORER_TX = 'https://testnet.monadscan.com/tx/';
@@ -67,6 +69,8 @@ export type SetupDeps = CommonDeps & {
   cardOf(address: Hex): Promise<bigint>;
   hasPulled(address: Hex): Promise<boolean>;
   sleep(ms: number): Promise<void>;
+  /** Clock for deadlines; defaults to Date.now (test seam). */
+  now?: () => number;
 };
 
 export type SweepDeps = CommonDeps & { masterAddress: Hex };
@@ -239,8 +243,22 @@ export async function waitForReceipt(
   }
 }
 
-async function waitForBlock(deps: Pick<SetupDeps, 'getBlockNumber' | 'sleep'>, target: bigint): Promise<void> {
-  while ((await deps.getBlockNumber()) < target) await deps.sleep(BLOCK_POLL_MS);
+/** Polls the chain head until it reaches `target`; throws with the last seen block after the deadline. */
+export async function waitForBlock(
+  deps: Pick<SetupDeps, 'getBlockNumber' | 'sleep' | 'now'>,
+  target: bigint,
+  timeoutMs: number = BLOCK_WAIT_TIMEOUT_MS,
+): Promise<void> {
+  const now = deps.now ?? Date.now;
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    const latest = await deps.getBlockNumber();
+    if (latest >= target) return;
+    if (now() >= deadline) {
+      throw new Error(`block ${target} not reached after ${timeoutMs / 1000}s (latest ${latest}); funded wallets cannot send yet`);
+    }
+    await deps.sleep(BLOCK_POLL_MS);
+  }
 }
 
 async function sendAndConfirm(
@@ -306,16 +324,25 @@ async function fund(deps: SetupDeps, transfers: readonly Transfer[]): Promise<Fu
   return { fundedBlocks, failed, failures, sentWei };
 }
 
-type CardState = { candidate: PullCandidate; cardId: bigint; needsPull: boolean };
+type CardState = { candidate: PullCandidate; cardId: bigint; needsPull: boolean; error: string | null };
 
 async function readCardState(deps: SetupDeps, candidate: PullCandidate): Promise<CardState> {
-  const cardId = await deps.cardOf(candidate.address);
-  if (cardId !== 0n) return { candidate, cardId, needsPull: false };
-  if (await deps.hasPulled(candidate.address)) {
-    deps.log(`warning: ${candidate.label} ${candidate.address} already used its free pull but owns no card; skipping`);
-    return { candidate, cardId: 0n, needsPull: false };
+  try {
+    const cardId = await deps.cardOf(candidate.address);
+    if (cardId !== 0n) return { candidate, cardId, needsPull: false, error: null };
+    if (await deps.hasPulled(candidate.address)) {
+      deps.log(`warning: ${candidate.label} ${candidate.address} already used its free pull but owns no card; skipping`);
+      return { candidate, cardId: 0n, needsPull: false, error: null };
+    }
+    return { candidate, cardId: 0n, needsPull: true, error: null };
+  } catch (error) {
+    return {
+      candidate,
+      cardId: 0n,
+      needsPull: false,
+      error: `reading card state of ${candidate.label} ${candidate.address} failed: ${errorText(error)}`,
+    };
   }
-  return { candidate, cardId: 0n, needsPull: true };
 }
 
 type PullOutcome = { candidate: PullCandidate; cardId: bigint | null; error: string | null };
@@ -404,7 +431,8 @@ export async function runSetup(deps: SetupDeps, opts: SetupOptions): Promise<Set
   deps.saveBots(withCardIds(bots, known));
 
   const pullFailures = outcomes.flatMap((o) => (o.error === null ? [] : [o.error]));
-  const failures = [...funding.failures, ...pullFailures];
+  const readFailures = states.flatMap((st) => (st.error === null ? [] : [st.error]));
+  const failures = [...funding.failures, ...readFailures, ...pullFailures];
   for (const line of failures) deps.log(`FAILED: ${line}`);
   deps.log(`done: funded ${funding.fundedBlocks.size}, sent ${mon(funding.sentWei)}, pulled ${outcomes.length - pullFailures.length}, failures ${failures.length}`);
   return {
@@ -425,7 +453,7 @@ export async function runSweep(deps: SweepDeps): Promise<SweepResult> {
   const gasPrice = await deps.getGasPrice();
   const fee = feePerTransfer(gasPrice);
 
-  const outcomes = await mapLimit(bots, PULL_CONCURRENCY, async (bot) => {
+  const outcomes = await mapLimit(bots, SWEEP_CONCURRENCY, async (bot) => {
     try {
       const balance = await deps.getBalance(bot.address);
       if (balance <= fee) return { returned: 0n, error: null };
@@ -453,6 +481,14 @@ export async function runSweep(deps: SweepDeps): Promise<SweepResult> {
 
 // ----------------------------------------------------------------------- main
 
+/** Maps viem's "receipt not found" error to null (still pending); rethrows anything else. */
+export function toReceiptOrNull(error: unknown): null {
+  if (error instanceof Error && (error.name === 'TransactionReceiptNotFoundError' || /could not be found/i.test(error.message))) {
+    return null;
+  }
+  throw error;
+}
+
 function buildDeps(env: Env): SetupDeps & SweepDeps {
   const chain = createChain(env.RPC_URLS, env.chainId);
   const botsFile = path.join(env.DATA_DIR, BOTS_FILE);
@@ -461,12 +497,7 @@ function buildDeps(env: Env): SetupDeps & SweepDeps {
     chain
       .call((c) => c.getTransactionReceipt({ hash }))
       .then((r): Receipt => ({ status: r.status, blockNumber: r.blockNumber }))
-      .catch((error: unknown) => {
-        if (error instanceof Error && (error.name === 'TransactionReceiptNotFoundError' || /could not be found/i.test(error.message))) {
-          return null;
-        }
-        throw error;
-      });
+      .catch(toReceiptOrNull);
 
   return {
     loadBots: () => loadBots(botsFile),

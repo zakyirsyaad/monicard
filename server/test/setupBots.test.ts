@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
-import { encodeFunctionData, formatEther, parseEther, type Hex } from 'viem';
+import { TransactionReceiptNotFoundError, encodeFunctionData, formatEther, parseEther, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { nadCardsAbi } from '@nad/shared';
 import {
@@ -13,6 +13,7 @@ import {
   runSweep,
   saveBots,
   topupNeeded,
+  toReceiptOrNull,
   waitForReceipt,
   type Bot,
   type Receipt,
@@ -322,6 +323,21 @@ describe('waitForReceipt', () => {
   });
 });
 
+// ------------------------------------------------------------- toReceiptOrNull
+
+describe('toReceiptOrNull', () => {
+  test('maps viem TransactionReceiptNotFoundError to null (pending)', () => {
+    const error = new TransactionReceiptNotFoundError({ hash: `0x${'ab'.repeat(32)}` });
+    expect(toReceiptOrNull(error)).toBeNull();
+  });
+
+  test('rethrows unrelated errors unchanged', () => {
+    const error = new Error('rpc exploded');
+    expect(() => toReceiptOrNull(error)).toThrow(error);
+    expect(() => toReceiptOrNull('not an error')).toThrow();
+  });
+});
+
 // ------------------------------------------------------------------- runSetup
 
 describe('runSetup', () => {
@@ -371,17 +387,60 @@ describe('runSetup', () => {
   });
 
   test('never sends freePull before block >= funding receipt block + 3', async () => {
+    // Agent and operator are already funded and the agent owns a card, so ONLY the two bots are
+    // funded (blocks 1001, 1002). Without the N9 wait, bot1 would pull at block 1004 < 1002 + 3.
     const bots = [botFor(0), botFor(1)];
-    const rig = makeRig({ bots });
+    const rig = makeRig({
+      bots,
+      balances: [
+        [addressOf(AGENT_KEY), MON('1')],
+        [OPERATOR_ADDRESS, MON('0.5')],
+      ],
+      cards: [[addressOf(AGENT_KEY), 9n]],
+      pulled: [addressOf(AGENT_KEY)],
+    });
     await runSetup(rig.deps, SETUP);
+    expect([...rig.fundingBlocks.values()]).toEqual([1001n, 1002n]);
     const pulls = rig.sent.filter((tx) => tx.data === FREE_PULL_DATA);
-    expect(pulls.length).toBe(3); // 2 bots + agent
+    expect(pulls).toHaveLength(2);
     for (const pull of pulls) {
       const funding = rig.fundingBlocks.get(lower(pull.from));
       expect(funding).toBeDefined();
       // the fake clock advances by one per send, so `block` is the block of this send
       expect(pull.block).toBeGreaterThanOrEqual(funding! + 3n);
     }
+  });
+
+  test('throws a clear error when the chain never reaches the N9 block', async () => {
+    const rig = makeRig({ bots: [botFor(0), botFor(1)] });
+    let now = 0;
+    rig.deps.now = () => now;
+    rig.deps.getBlockNumber = async () => 1000n; // stuck chain head
+    rig.deps.sleep = async (ms) => {
+      now += ms;
+    };
+    await expect(runSetup(rig.deps, SETUP)).rejects.toThrow(/block \d+ not reached after \d+s/);
+    expect(rig.sent.some((tx) => tx.data === FREE_PULL_DATA)).toBe(false);
+  });
+
+  test('an error reading card state fails that wallet only; the rest are pulled and saved', async () => {
+    const bots = [botFor(0), botFor(1)];
+    const rig = makeRig({ bots });
+    const cardOf = rig.deps.cardOf;
+    rig.deps.cardOf = async (address) => {
+      if (lower(address) === lower(bots[0]!.address) && rig.sent.every((tx) => tx.data !== FREE_PULL_DATA)) {
+        throw new Error('rpc down');
+      }
+      return cardOf(address);
+    };
+    const result = await runSetup(rig.deps, SETUP);
+    expect(result.ok).toBe(false);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).toContain(bots[0]!.address);
+    const pullers = rig.sent.filter((tx) => tx.data === FREE_PULL_DATA).map((tx) => lower(tx.from));
+    expect(pullers).toContain(lower(bots[1]!.address));
+    expect(pullers).not.toContain(lower(bots[0]!.address));
+    expect(rig.saved.at(-1)![1]!.cardId).not.toBeNull();
   });
 
   test('freePull is sent to the cards contract with the configured gas and no value', async () => {
