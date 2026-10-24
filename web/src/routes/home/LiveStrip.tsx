@@ -8,7 +8,7 @@ export function LiveStrip() {
   const { stats, block } = useArenaSocket('all');
   const treasury = stats ? Number(formatEther(BigInt(stats.treasury))) : 0;
   const items = [
-    block > 0 ? { k: 'Block', v: `#${formatBlock(block)}` } : null,
+    block > 0 ? { k: 'Block', v: formatBlock(block) } : null,
     stats && stats.txTotal > 0 ? { k: 'Onchain tx', v: formatInt(stats.txTotal) } : null,
     treasury > 0 ? { k: 'Treasury', v: `${treasury.toFixed(2)} MON` } : null,
   ].filter((i): i is { k: string; v: string } => i !== null);
