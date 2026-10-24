@@ -31,7 +31,7 @@ Prinsip: hanya demo fitur yang sudah terbukti jalan di HP (rubrik "all announced
 > "The opponent is an AI Agent with its own wallet. It plays through the same relay as any human, and it learns: after each duel in Tap Blitz a coach updates its policy and publishes the lesson."
 
 **2:10 – 2:30 · Menguji batas Monad**
-[Jalankan swarm: `bash server/scripts/admin.sh swarm 10 4` (sudah diketik, tinggal Enter).]
+[Swarm bot berjalan di **testnet**: pindah ke tab `https://nadgacha.43-134-58-217.sslip.io/arena`, lalu jalankan `bash server/scripts/admin.sh swarm 10 4` (sudah diketik, tinggal Enter). Proyektor monicard.xyz/arena menampilkan mainnet.]
 > "Now ten bot duels at once, plus everyone in this room. Each match lives in its own storage, so Monad runs them in parallel. [Baca tx/s puncak dari layar.]"
 
 **2:30 – 2:50 · Pasar dan bisnis (PMF + revenue)**
