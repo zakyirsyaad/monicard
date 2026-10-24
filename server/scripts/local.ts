@@ -175,13 +175,22 @@ let shuttingDown = false;
 const log = (line: string): void => console.log(line);
 const logError = (line: string): void => console.error(line);
 
+/** The server prefixes its own lines with `[server]`; drop it so the registry prefix is not doubled. */
+export function stripOwnPrefix(line: string, name: string): string {
+  const own = `[${name}]`;
+  return line.startsWith(own) ? line.slice(own.length).trimStart() : line;
+}
+
 function pipeWithPrefix(stream: NodeJS.ReadableStream | null, prefix: string, lines: string[]): void {
   if (!stream) return;
   let partial = '';
-  const emit = (line: string): void => {
+  const name = prefix.slice(1, -1);
+  const emit = (rawLine: string): void => {
+    const line = stripOwnPrefix(rawLine, name);
     lines.push(line);
     if (lines.length > TAIL_LINES) lines.shift();
-    log(`${prefix} ${line}`);
+    // Once shutdown has begun the children print noise (esbuild "service was stopped", pnpm errors).
+    if (!shuttingDown) log(`${prefix} ${line}`);
   };
   stream.on('data', (chunk: Buffer) => {
     const parts = (partial + chunk.toString()).split('\n');
@@ -265,10 +274,13 @@ function stopAllSync(): void {
 }
 
 async function shutdown(code: number): Promise<never> {
+  if (shuttingDown) return new Promise<never>(() => undefined); // first caller exits the process
   shuttingDown = true;
+  log('Stopping…');
   stopAllSync();
   const deadline = Date.now() + KILL_GRACE_MS;
   while (Date.now() < deadline && registry.some((m) => !m.exited())) await sleep(50);
+  log('Stopped.');
   process.exit(code);
 }
 
@@ -433,7 +445,6 @@ function main(): void {
   process.on('exit', stopAllSync);
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
     process.on(signal, () => {
-      log(`\n${signal} received, stopping...`);
       void shutdown(0);
     });
   }

@@ -9,6 +9,7 @@ import {
   deriveLocalKeys,
   lanAddress,
   shieldFromDotenv,
+  stripOwnPrefix,
 } from '../scripts/local';
 
 const KEY_PATTERN = /^0x[0-9a-fA-F]{64}$/;
@@ -185,5 +186,16 @@ describe('bannerLines', () => {
 
     expect(text).toContain('Open http://localhost:5173 on this computer.');
     expect(text).not.toContain('phone');
+  });
+});
+
+describe('stripOwnPrefix', () => {
+  test('removes the prefix the child adds itself', () => {
+    expect(stripOwnPrefix('[server] Monicard API on port 8080', 'server')).toBe('Monicard API on port 8080');
+  });
+
+  test('leaves other lines untouched', () => {
+    expect(stripOwnPrefix('VITE ready', 'web')).toBe('VITE ready');
+    expect(stripOwnPrefix('[web] x', 'server')).toBe('[web] x');
   });
 });
