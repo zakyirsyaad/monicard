@@ -6,6 +6,7 @@ import {NadCards} from "../src/NadCards.sol";
 import {BlitzArena} from "../src/BlitzArena.sol";
 import {StakeVault} from "../src/StakeVault.sol";
 import {CardBattle} from "../src/CardBattle.sol";
+import {BattleStakeVault} from "../src/BattleStakeVault.sol";
 import {INadCards} from "../src/interfaces/INadCards.sol";
 
 /// @notice Deploys NadCards + BlitzArena, locks the arena into NadCards, and
@@ -28,11 +29,11 @@ contract Deploy is Script {
         console2.log("deployBlock", block.number);
     }
 
-    /// @notice Mainnet path: deploys NadCards + BlitzArena + StakeVault + CardBattle from
+    /// @notice Mainnet path: deploys NadCards + BlitzArena + StakeVault + CardBattle + BattleStakeVault from
     ///         MAINNET_DEPLOYER_KEY. No setBaseURI (PUBLIC_URL is empty on mainnet).
     function runMainnet()
         external
-        returns (NadCards cards, BlitzArena arena, StakeVault vault, CardBattle battle)
+        returns (NadCards cards, BlitzArena arena, StakeVault vault, CardBattle battle, BattleStakeVault battleVault)
     {
         uint256 deployerKey = vm.envUint("MAINNET_DEPLOYER_KEY");
         vm.startBroadcast(deployerKey);
@@ -41,12 +42,14 @@ contract Deploy is Script {
         cards.setArena(address(arena));
         vault = new StakeVault(address(arena));
         battle = new CardBattle();
+        battleVault = new BattleStakeVault(address(battle));
         vm.stopBroadcast();
 
         console2.log("NadCards", address(cards));
         console2.log("BlitzArena", address(arena));
         console2.log("StakeVault", address(vault));
         console2.log("CardBattle", address(battle));
+        console2.log("BattleStakeVault", address(battleVault));
         console2.log("deployBlock", block.number);
     }
 
