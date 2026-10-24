@@ -133,6 +133,10 @@ async function relayWithResends(deps: ActionDeps, raw: Hex): Promise<Relayed> {
   }
 }
 
+/** Calls the player must not blindly repeat: a value tx would pay twice, a duel call would duplicate a duel. */
+const isUnsafeToRepeat = (call: CallParams): boolean =>
+  (call.value ?? 0n) > 0n || call.fn === 'createDuel' || call.fn === 'joinDuel';
+
 /**
  * Signs a call with the burner and relays it. A nonce error re-signs once, but only if no send of this call
  * ever timed out: after a timeout the first send probably landed, and re-signing would duplicate a value tx.
@@ -157,6 +161,9 @@ export async function sendCall(deps: ActionDeps, call: CallParams): Promise<Rela
   } catch (failure) {
     if (!(failure instanceof RelayFailure)) throw failure;
     const err = failure.cause;
+    if (failure.timedOut && err instanceof TimeoutError && isUnsafeToRepeat(call)) {
+      throw new MaybeLandedError(call.fn);
+    }
     if (!(err instanceof ApiError) || !NONCE_ERROR.test(err.reason)) throw err;
     if (failure.timedOut) {
       const { nonce } = await api.getAccount(account.address);

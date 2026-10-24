@@ -23,9 +23,22 @@ export function winratePct(wins: number, duels: number): number | null {
   return duels > 0 ? Math.round((wins / duels) * 100) : null;
 }
 
-/** Treasury in MON with 2 decimals and thousands commas: "1,250.50". */
+const MIN_SHOWN_WEI = 10_000_000_000_000_000n; // 0.01 MON
+
+/** Wei string to bigint; 0n when the server sent something that is not an integer. */
+function safeWei(wei: string): bigint {
+  try {
+    return BigInt(wei);
+  } catch {
+    return 0n;
+  }
+}
+
+/** Treasury in MON with 2 decimals and thousands commas: "1,250.50". A positive amount under 0.01 is "<0.01". */
 export function treasuryMon(wei: string): string {
-  return treasuryFormatter.format(Number(formatEther(BigInt(wei))));
+  const value = safeWei(wei);
+  if (value > 0n && value < MIN_SHOWN_WEI) return '<0.01';
+  return treasuryFormatter.format(Number(formatEther(value)));
 }
 
 /** The header stats row. Items whose value is 0 are left out. */
@@ -35,7 +48,7 @@ export function statsItems(stats: StatsMsg | null, treasury: string): StatsItem[
     stats.uniquePlayers > 0 ? { key: 'players', text: `${formatInt(stats.uniquePlayers)} players` } : null,
     stats.totalDuels > 0 ? { key: 'duels', text: `${formatInt(stats.totalDuels)} duels` } : null,
     stats.txTotal > 0 ? { key: 'tx', text: `${formatInt(stats.txTotal)} onchain tx` } : null,
-    BigInt(stats.treasury) > 0n ? { key: 'treasury', text: `Treasury ${treasury} MON` } : null,
+    safeWei(stats.treasury) > 0n ? { key: 'treasury', text: `Treasury ${treasury} MON` } : null,
   ];
   return items.filter((item): item is StatsItem => item !== null);
 }

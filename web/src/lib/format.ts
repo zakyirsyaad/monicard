@@ -4,9 +4,12 @@ export const EXPLORER = 'https://testnet.monadscan.com';
 
 const intFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 
+const INTEGER_STRING = /^-?\d+$/;
+
 /** Thousands-separated integer: 1950 -> "1,950". */
 export function formatInt(n: number | bigint | string): string {
-  if (typeof n === 'string') return intFormatter.format(BigInt(n));
+  if (typeof n === 'string') return INTEGER_STRING.test(n) ? intFormatter.format(BigInt(n)) : n;
+  if (typeof n === 'number' && Number.isNaN(n)) return '—';
   return intFormatter.format(n);
 }
 

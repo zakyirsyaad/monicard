@@ -26,6 +26,17 @@ describe('formatInt', () => {
   });
 });
 
+describe('formatInt with invalid input', () => {
+  it('returns non-integer strings as-is instead of throwing', () => {
+    expect(formatInt('abc')).toBe('abc');
+    expect(formatInt('1.5')).toBe('1.5');
+    expect(formatInt('')).toBe('');
+  });
+  it('shows an em dash for NaN', () => {
+    expect(formatInt(NaN)).toBe('—');
+  });
+});
+
 describe('formatMs', () => {
   it('appends the ms unit', () => {
     expect(formatMs(312)).toBe('312 ms');

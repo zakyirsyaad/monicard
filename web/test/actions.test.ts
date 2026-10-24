@@ -168,6 +168,18 @@ describe('sendCall', () => {
     expect(relay).toHaveBeenCalledTimes(4);
   });
 
+  it.each([
+    ['paidPull', { value: 50_000_000_000_000_000n }],
+    ['createDuel', {}],
+    ['joinDuel', {}],
+  ])('throws MaybeLandedError when every resend of %s times out', async (fn, extra) => {
+    const relay = vi.fn<Api['relay']>().mockRejectedValue(new TimeoutError(5000));
+    const err = await sendCall(deps(makeApi({ relay })), { ...call, fn, ...extra }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MaybeLandedError);
+    expect((err as MaybeLandedError).fn).toBe(fn);
+    expect(relay).toHaveBeenCalledTimes(4);
+  });
+
   it('refetches the nonce and retries once on a nonce error', async () => {
     const getAccount = vi
       .fn<Api['getAccount']>()

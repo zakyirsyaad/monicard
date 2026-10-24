@@ -9,7 +9,7 @@ export type FriendlyInput =
   | { kind: 'reverted'; fn: string; duelStatus?: DuelStatus }
   | { kind: 'relay'; reason: string }
   | { kind: 'network' }
-  | { kind: 'uncertain' }
+  | { kind: 'uncertain'; fn?: string }
   | { kind: 'agent'; reason: AgentRefusalReason };
 
 export type ErrorContext = { fn: string; duelStatus?: DuelStatus };
@@ -58,6 +58,7 @@ export function friendlyError(e: FriendlyInput): string {
     case 'network':
       return 'Network is busy. Trying again.';
     case 'uncertain':
+      if (e.fn === 'createDuel' || e.fn === 'joinDuel') return 'That may have gone through. Check Play and try again.';
       return 'That may have gone through. Check your card and try again.';
     case 'agent':
       return agentMessage(e.reason);
@@ -81,7 +82,7 @@ export function toFriendly(err: unknown, ctx: ErrorContext): string {
     return friendlyError({ kind: 'reverted', fn, duelStatus: ctx.duelStatus });
   }
   if (err instanceof FundError) return fundMessage(err);
-  if (err instanceof MaybeLandedError) return friendlyError({ kind: 'uncertain' });
+  if (err instanceof MaybeLandedError) return friendlyError({ kind: 'uncertain', fn: err.fn });
   if (err instanceof InsufficientFundsError) return 'Not enough test MON for another pull.';
   if (err instanceof NetworkError || err instanceof TimeoutError) return friendlyError({ kind: 'network' });
   if (err instanceof ApiError) return friendlyError({ kind: 'relay', reason: err.reason });

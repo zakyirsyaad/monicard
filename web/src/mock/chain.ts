@@ -221,10 +221,6 @@ export type MockChain = {
 
 const keyOf = (a: Hex): string => a.toLowerCase();
 const sameAddress = (a: Hex, b: Hex): boolean => keyOf(a) === keyOf(b);
-const botKeysOnly = new Set(CONFIG.bots.map((b) => b.toLowerCase()));
-/** Bots on both sides: never featured on the projector. */
-const isBotOnly = (d: DuelView): boolean =>
-  botKeysOnly.has(d.p1.toLowerCase()) && botKeysOnly.has(d.p2.toLowerCase());
 const isFinished = (d: DuelView): boolean =>
   d.status === 'P1Won' || d.status === 'P2Won' || d.status === 'Draw';
 const reverted = (): Outcome => ({ status: 'reverted', events: {} });
@@ -263,6 +259,9 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
   let interval: ReturnType<typeof setInterval> | null = null;
 
   const botKeys = new Set([keyOf(CONFIG.agent), ...CONFIG.bots.map(keyOf)]);
+  const botOnlyKeys = new Set(CONFIG.bots.map(keyOf));
+  /** Bots on both sides: never featured on the projector. */
+  const isBotOnly = (d: DuelView): boolean => botOnlyKeys.has(keyOf(d.p1)) && botOnlyKeys.has(keyOf(d.p2));
   const friendAddress = CONFIG.bots[0] as Hex;
 
   function later(fn: () => void, ms: number): void {

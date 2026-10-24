@@ -100,6 +100,12 @@ describe('toFriendly', () => {
     expect(toFriendly(new MaybeLandedError('paidPull'), ctx)).toBe(text);
   });
 
+  it('points to Play when a duel create or join may have gone through', () => {
+    const text = 'That may have gone through. Check Play and try again.';
+    expect(toFriendly(new MaybeLandedError('createDuel'), ctx)).toBe(text);
+    expect(toFriendly(new MaybeLandedError('joinDuel'), ctx)).toBe(text);
+  });
+
   it('maps funding refusals', () => {
     expect(toFriendly(new FundError('disabled'), ctx)).toBe('Test MON is off right now. Ask the host to enable it.');
     for (const reason of ['limit_address', 'limit_ip', 'budget'] as const) {

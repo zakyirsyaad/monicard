@@ -29,7 +29,7 @@ export function LatencyBadge({ block, latencyMs, txHash }: LatencyBadgeProps) {
           href={explorerTx(txHash)}
           target="_blank"
           rel="noreferrer"
-          aria-label="View last transaction on MonadScan"
+          aria-label={`${text}, view last transaction on MonadScan`}
           className={`${badgeClass} hover:underline`}
         >
           {text}

@@ -40,12 +40,12 @@ export function FeaturedDuel({ duel, config, block }: FeaturedDuelProps) {
       </div>
       <div className="grid grid-cols-2 gap-8">
         <div className="flex flex-col gap-4">
-          <HpBar side="self" name={labels.p1} hp={duel.hp1} maxHp={duel.maxHp1} pendingDamage={0} />
-          <CardSlot id={duel.card1 > 0 ? String(duel.card1) : null} />
+          <HpBar side="self" size="lg" name={labels.p1} hp={duel.hp1} maxHp={duel.maxHp1} pendingDamage={0} />
+          <CardSlot key={duel.card1} id={duel.card1 > 0 ? String(duel.card1) : null} />
         </div>
         <div className="flex flex-col gap-4">
-          <HpBar side="opponent" name={labels.p2} hp={duel.hp2} maxHp={duel.maxHp2} pendingDamage={0} />
-          <CardSlot id={duel.card2 > 0 ? String(duel.card2) : null} />
+          <HpBar side="opponent" size="lg" name={labels.p2} hp={duel.hp2} maxHp={duel.maxHp2} pendingDamage={0} />
+          <CardSlot key={duel.card2} id={duel.card2 > 0 ? String(duel.card2) : null} />
         </div>
       </div>
       <p className={`display text-center ${statusColor(duel.status)}`}>{duelStatusText(duel, block, labels)}</p>

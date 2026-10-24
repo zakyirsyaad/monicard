@@ -79,6 +79,16 @@ describe('treasuryMon', () => {
     expect(treasuryMon('50000000000000000')).toBe('0.05');
     expect(treasuryMon('12345600000000000000000')).toBe('12,345.60');
   });
+  it('shows <0.01 for a positive amount below 0.01 MON', () => {
+    expect(treasuryMon('1')).toBe('<0.01');
+    expect(treasuryMon('9999999999999999')).toBe('<0.01');
+    expect(treasuryMon('10000000000000000')).toBe('0.01');
+  });
+  it('falls back to 0.00 for an invalid wei string', () => {
+    expect(treasuryMon('')).toBe('0.00');
+    expect(treasuryMon('abc')).toBe('0.00');
+    expect(treasuryMon('1.5')).toBe('0.00');
+  });
 });
 
 describe('statsItems', () => {
@@ -110,6 +120,11 @@ describe('statsItems', () => {
 
   it('is empty when everything is 0', () => {
     expect(statsItems(stats({ txTotal: 0, uniquePlayers: 0, totalDuels: 0, treasury: '0' }), '0.00')).toEqual([]);
+  });
+
+  it('does not throw on an invalid treasury and hides the item', () => {
+    const items = statsItems(stats({ treasury: 'not-a-number' }), '0.00');
+    expect(items.map((i) => i.key)).toEqual(['players', 'duels', 'tx']);
   });
 
   it('is empty before the first stats message', () => {

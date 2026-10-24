@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Hex } from 'viem';
 import type { AgentMsg, Config, DuelView, StatsMsg } from '../src/lib/types';
+import { HpBar } from '../src/components/HpBar';
+import { LatencyBadge } from '../src/components/LatencyBadge';
 import { AgentPanel } from '../src/routes/arena/AgentPanel';
 import { Header } from '../src/routes/arena/Header';
 import { Leaderboard } from '../src/routes/arena/Leaderboard';
 import { SwarmGrid } from '../src/routes/arena/SwarmGrid';
+import { TxCounters } from '../src/routes/arena/TxCounters';
 
 const CARDS: Hex = '0x1111111111111111111111111111111111111111';
 const ARENA: Hex = '0x2222222222222222222222222222222222222222';
@@ -160,5 +163,51 @@ describe('SwarmGrid', () => {
     expect(html).toContain('bg-berry');
     expect(html).toContain('width:50%');
     expect(html).toContain('9s left');
+  });
+});
+
+describe('HpBar size', () => {
+  const bar = (size?: 'md' | 'lg') =>
+    render(<HpBar side="self" name="A" hp={900} maxHp={1500} pendingDamage={0} size={size} />);
+
+  it('keeps the 12px track and data-lg number by default', () => {
+    const html = bar();
+    expect(html).toContain('h-3');
+    expect(html).toContain('data-lg');
+  });
+
+  it('lg is a 20px track with a display number for the projector', () => {
+    const html = bar('lg');
+    expect(html).toContain('h-5');
+    expect(html).not.toContain('h-3');
+    expect(html).toContain('display');
+    expect(html).not.toContain('data-lg');
+  });
+});
+
+describe('TxCounters', () => {
+  it('uses the design-scale display-tap class, not a stock Tailwind size', () => {
+    const html = render(<TxCounters stats={STATS} />);
+    expect(html).toContain('display-tap');
+    expect(html).toContain('font-mono');
+    expect(html).toContain('tabular-nums');
+    expect(html).not.toContain('text-6xl');
+  });
+});
+
+describe('LatencyBadge', () => {
+  it('keeps the latency value in the link label', () => {
+    const html = render(<LatencyBadge block={1} latencyMs={312} txHash={TX} />);
+    expect(html).toContain('aria-label="312 ms, view last transaction on MonadScan"');
+  });
+});
+
+describe('Header treasury', () => {
+  it('shows <0.01 for a tiny positive treasury', () => {
+    const html = render(<Header config={CONFIG} stats={{ ...STATS, treasury: '1000' }} block={1} connected />);
+    expect(html).toContain('Treasury &lt;0.01 MON');
+  });
+  it('does not throw on a garbage treasury', () => {
+    expect(() => render(<Header config={CONFIG} stats={{ ...STATS, treasury: 'x' }} block={1} connected />)).not.toThrow();
   });
 });
