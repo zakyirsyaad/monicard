@@ -5,7 +5,7 @@ import type { DuelStatus, DuelView } from '@nad/shared';
 // Approved additions: optional `StatsMsg.lastTxHash` (the server may never send it); optional StakeVault config (N15).
 
 export type Config = {
-  chainId: 10143;
+  chainId: number;
   /** `stakeVault` is optional (N15): the stake UI renders only when it and both stake gas limits are present. */
   contracts: { cards: Hex; arena: Hex; stakeVault?: Hex; battleStakeVault?: Hex };
   gasLimits: {

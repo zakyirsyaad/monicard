@@ -7,7 +7,8 @@ import { api } from '../lib/api';
 import { RevertedError } from '../lib/actions';
 import { toFriendly } from '../lib/errors';
 import { pullCard } from '../lib/flows';
-import { formatInt, formatMon } from '../lib/format';
+import { EXPLORER, formatInt, formatMon } from '../lib/format';
+import { NETWORK } from '../lib/network';
 import { RARITIES, RARITY_ODDS } from '../lib/game';
 import { actionDeps, burnerAccount } from '../lib/player';
 import { takeReturnTo } from '../lib/returnTo';
@@ -33,7 +34,7 @@ function InAppBrowserBanner() {
 }
 
 const GITHUB = 'https://github.com/zakyirsyaad/monicard';
-const SCAN = 'https://testnet.monadscan.com/address';
+const SCAN = `${EXPLORER}/address`;
 
 const SECTION = 'flex flex-col gap-4 border-t border-line pt-6 md:pt-8';
 const PANEL = 'flex flex-col gap-3 rounded-card border border-line bg-surface-raised p-4';
@@ -293,7 +294,7 @@ function Footer({ config }: { config: Config | null }) {
           </a>
         ))}
       </nav>
-      <p className="data text-ink-muted">Live on Monad testnet · Deployed on Monad mainnet · Built at Monad Blitz Jogja Vol. 2</p>
+      <p className="data text-ink-muted">Live on {NETWORK.label} · Deployed on Monad mainnet and testnet · Built at Monad Blitz Jogja Vol. 2</p>
     </footer>
   );
 }

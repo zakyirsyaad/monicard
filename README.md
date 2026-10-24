@@ -7,9 +7,9 @@ Monicard is a real-time 1v1 card battle played entirely onchain. Draw cards from
 Built in one day at **Monad Blitz Jogja Vol. 2** (24 October 2026) by a solo builder with a team of AI agents.
 
 - **Repo:** https://github.com/zakyirsyaad/monicard
-- **Live app:** https://monicard.xyz (open on your phone)
-- **Projector view:** https://monicard.xyz/arena
-- **Network:** Monad Testnet (chain id 10143); contracts also deployed on Monad Mainnet (chain id 143)
+- **Live app on Monad Mainnet:** https://monicard.xyz (open on your phone; projector view at https://monicard.xyz/arena)
+- **Live app on Monad Testnet:** https://nadgacha.43-134-58-217.sslip.io (same app, testnet contracts)
+- **Networks:** Monad Mainnet (chain id 143) and Monad Testnet (chain id 10143), one game server per network
 
 ## Try it in 30 seconds
 
@@ -56,7 +56,7 @@ A match is roughly 15 to 25 transactions at about 0.01 MON each.
 
 ### Monad Mainnet (chain id 143)
 
-The same five contracts, same bytecode, deployed and verified on mainnet (`deployments/mainnet.json`). The live app runs on testnet.
+The same five contracts, same bytecode, deployed and verified on mainnet (`deployments/mainnet.json`). https://monicard.xyz plays on these contracts: players' burner wallets are funded with real MON by the relay, so a first-time visitor still needs no wallet.
 
 | Contract | Monad Mainnet (143) |
 |---|---|

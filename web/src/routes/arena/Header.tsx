@@ -1,6 +1,7 @@
 import { explorerAddress, explorerTx, formatBlock, shortHex } from '../../lib/format';
 import { statsItems, treasuryMon } from '../../lib/arenaView';
 import type { Config, StatsMsg } from '../../lib/types';
+import { NETWORK } from '../../lib/network';
 
 const LINK_CLASS = 'text-purple-ink underline-offset-2 hover:underline';
 
@@ -48,7 +49,7 @@ export function Header({ config, stats, block, connected }: HeaderProps) {
         </ul>
       </div>
       <div className="data flex flex-wrap items-center gap-x-6 gap-y-1 text-ink-muted">
-        <span>Monad testnet</span>
+        <span>{NETWORK.label}</span>
         <ExplorerLink label="Cards" href={explorerAddress(config.contracts.cards)} text={shortHex(config.contracts.cards)} />
         <ExplorerLink label="Arena" href={explorerAddress(config.contracts.arena)} text={shortHex(config.contracts.arena)} />
         {lastTxHash && <ExplorerLink label="Latest tx" href={explorerTx(lastTxHash)} text={shortHex(lastTxHash)} />}

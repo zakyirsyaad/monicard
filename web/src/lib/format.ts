@@ -1,6 +1,7 @@
 import { formatEther } from 'viem';
+import { NETWORK } from './network';
 
-export const EXPLORER = 'https://testnet.monadscan.com';
+export const EXPLORER = NETWORK.explorer;
 
 const intFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 

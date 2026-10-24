@@ -44,7 +44,7 @@ Prinsip: hanya demo fitur yang sudah terbukti jalan di HP (rubrik "all announced
 > "Everything is public:
 > - **Repo:** github.com/zakyirsyaad/monicard
 > - **Contracts:** CardBattle, NadCards, BlitzArena and StakeVault, **verified on MonadScan**, deployed on **Monad testnet**, and on **Monad mainnet** too.
-> - **Live:** **monicard.xyz** — running right now.
+> - **Live:** **monicard.xyz**, running on **Monad mainnet** right now. The testnet build stays up as a mirror.
 > Thank you."
 
 ## Isi sebelum naik panggung

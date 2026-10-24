@@ -11,6 +11,7 @@ import { useConfig } from '../../lib/useConfig';
 import { battleStakeAvailable, monLabel, prepareBattleStake, stakeBattle } from '../../lib/battle/stake';
 import { StakeChips } from './StakeChips';
 import { battleAvailable, challengeBattleAgent, createBattle } from '../../lib/battle/actions';
+import { NETWORK } from '../../lib/network';
 
 type Busy = 'create' | 'agent' | null;
 
@@ -242,7 +243,7 @@ export function BattleLobby() {
           <Link to="/play" className="label text-ink-muted">
             ← Tap Blitz
           </Link>
-          <span className="data text-ink-muted">Monad testnet</span>
+          <span className="data text-ink-muted">{NETWORK.label}</span>
         </footer>
       </div>
     </main>

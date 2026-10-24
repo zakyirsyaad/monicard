@@ -1,17 +1,11 @@
-import { createPublicClient, defineChain, http } from 'viem';
+import { createPublicClient, http } from 'viem';
+import { monadChain, NETWORK } from './network';
 import type { Hex } from 'viem';
 import { stakeVaultAbi } from './abi';
 import type { StakeView } from './types';
 
-/** Monad testnet public RPC: the one place web reads the chain directly (ruling A, N15). */
-export const PUBLIC_RPC = 'https://testnet-rpc.monad.xyz';
-
-const monadTestnet = defineChain({
-  id: 10143,
-  name: 'Monad Testnet',
-  nativeCurrency: { name: 'Monad', symbol: 'MON', decimals: 18 },
-  rpcUrls: { default: { http: [PUBLIC_RPC] } },
-});
+/** Public RPC of this host's network: the one place web reads the chain directly (ruling A, N15). */
+export const PUBLIC_RPC = NETWORK.rpc;
 
 /** Reads `StakeVault.stakes(duelId)`. Throws on transient RPC errors: callers retry on their next trigger. */
 export type StakeReader = (vault: Hex, duelId: string) => Promise<StakeView>;
@@ -23,7 +17,7 @@ export function parseStakeTuple(tuple: readonly [bigint, number, boolean, boolea
 }
 
 export function createStakeReader(rpcUrl: string = PUBLIC_RPC): StakeReader {
-  const client = createPublicClient({ chain: monadTestnet, transport: http(rpcUrl) });
+  const client = createPublicClient({ chain: monadChain, transport: http(rpcUrl) });
   return async (vault, duelId) =>
     parseStakeTuple(
       await client.readContract({

@@ -2,7 +2,7 @@
 const NETWORKS = [
   {
     name: 'Monad Testnet',
-    note: 'chain 10143 · the live game',
+    note: 'chain 10143',
     scan: 'https://testnet.monadscan.com/address',
     contracts: [
       ['CardBattle', '0x68B4759FaA160907327a6eB40dAe0A4094A90242'],
@@ -14,7 +14,7 @@ const NETWORKS = [
   },
   {
     name: 'Monad Mainnet',
-    note: 'chain 143 · same bytecode',
+    note: 'chain 143',
     scan: 'https://monadscan.com/address',
     contracts: [
       ['CardBattle', '0x1407a7463ec8dEAA57C55Df634f4C150AE93d26f'],

@@ -2,6 +2,7 @@ import { formatEther } from 'viem';
 import { formatBlock, formatInt } from '../../lib/format';
 import { useArenaSocket } from '../../lib/useArenaSocket';
 import './home.css';
+import { NETWORK } from '../../lib/network';
 
 /** Live proof strip. Each number appears only once the server has sent a non-zero value. */
 export function LiveStrip() {
@@ -17,7 +18,7 @@ export function LiveStrip() {
     <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-card border border-line bg-surface-raised px-4 py-3">
       <span className="label flex items-center gap-2 text-ink">
         <span className="live-dot block h-2 w-2 rounded-full bg-purple" aria-hidden="true" />
-        Live on Monad testnet
+        Live on {NETWORK.label}
       </span>
       {items.map((i) => (
         <span key={i.k} className="data text-ink-muted">

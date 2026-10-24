@@ -1,20 +1,14 @@
-import { createPublicClient, defineChain, http } from 'viem';
+import { createPublicClient, http } from 'viem';
+import { monadChain, NETWORK } from '../network';
 import type { Hex } from 'viem';
 import { battleAbi } from './abi';
 import { normalizeMatch } from './rules';
 import type { MatchView } from './types';
 
-/** Monad testnet public RPC: the only place the battle screen reads the chain directly. */
-export const PUBLIC_RPC = 'https://testnet-rpc.monad.xyz';
+/** Public RPC of this host's network: the only place the battle screen reads the chain directly. */
+export const PUBLIC_RPC = NETWORK.rpc;
 
-const monadTestnet = defineChain({
-  id: 10143,
-  name: 'Monad Testnet',
-  nativeCurrency: { name: 'Monad', symbol: 'MON', decimals: 18 },
-  rpcUrls: { default: { http: [PUBLIC_RPC] } },
-});
-
-export const battleClient = createPublicClient({ chain: monadTestnet, transport: http(PUBLIC_RPC) });
+export const battleClient = createPublicClient({ chain: monadChain, transport: http(PUBLIC_RPC) });
 
 export async function readBlockNumber(): Promise<number> {
   return Number(await battleClient.getBlockNumber());
