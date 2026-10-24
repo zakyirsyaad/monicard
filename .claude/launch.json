@@ -1,0 +1,36 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web-mock",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "-F",
+        "@nad/web",
+        "exec",
+        "vite",
+        "--port",
+        "5180",
+        "--strictPort"
+      ],
+      "env": {
+        "VITE_USE_MOCK": "1"
+      },
+      "port": 5180
+    },
+    {
+      "name": "web-real",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "-F",
+        "@nad/web",
+        "exec",
+        "vite",
+        "--port",
+        "5181",
+        "--strictPort"
+      ],
+      "port": 5181
+    }
+  ]
+}
