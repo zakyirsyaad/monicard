@@ -15,8 +15,15 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 VPS_HOST="${VPS_HOST:-0xAlvary3}"
-VPS_DIR="${VPS_DIR:-nadgacha}"
+VPS_DIR="${VPS_DIR-nadgacha}"
 PUBLIC_URL_CHECK="${PUBLIC_URL_CHECK:-https://nadgacha.43-134-58-217.sslip.io}"
+# rsync --delete runs against this directory, so it must be a plain path below the remote home.
+case "$VPS_DIR" in
+  '' | . | .. | /* | ../* | */.. | */../* | ~*)
+    echo "ERROR: VPS_DIR must be a relative path below the remote home, got: '$VPS_DIR'" >&2
+    exit 2
+    ;;
+esac
 REMOTE_PORT=8090
 PM2_NAME="nadgacha"
 
@@ -89,7 +96,26 @@ RSYNC_EXCLUDES=(
 rsync -az --delete "${RSYNC_EXCLUDES[@]}" "$ROOT/" "$VPS_HOST:$VPS_DIR/"
 
 echo "==> .env"
-if [ "$FORCE_ENV" = "1" ] || ! ssh "$VPS_HOST" "test -f ~/$(printf '%q' "$VPS_DIR")/.env"; then
+copy_env=0
+if [ "$FORCE_ENV" = "1" ]; then
+  copy_env=1
+else
+  # Exit 0 = exists, 1 = missing. Anything else (e.g. ssh's 255) is an error, never "missing".
+  if ssh "$VPS_HOST" "test -f ~/$(printf '%q' "$VPS_DIR")/.env"; then
+    env_status=0
+  else
+    env_status=$?
+  fi
+  case "$env_status" in
+    0) ;;
+    1) copy_env=1 ;;
+    *)
+      echo "ERROR: could not check the remote .env (ssh exit $env_status), aborting" >&2
+      exit 1
+      ;;
+  esac
+fi
+if [ "$copy_env" = "1" ]; then
   TMP_ENV="$(mktemp)"
   chmod 600 "$TMP_ENV"
   awk -v port="PORT=$REMOTE_PORT" '
@@ -105,12 +131,20 @@ else
 fi
 
 echo "==> remote install"
+# shellcheck disable=SC2016 # $1 and $HOME must expand on the VPS
 remote '
+for tool in node npx pm2; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "ERROR: $tool not found on the VPS PATH (login shell); install it or fix ~/.profile" >&2
+    exit 1
+  fi
+done
 cd "$HOME/$1" &&
-npx -y pnpm@12.10.1 install --frozen-lockfile --filter server... </dev/null
+CI=true npx -y pnpm@12.10.1 install --frozen-lockfile --filter server... </dev/null
 '
 
 echo "==> restart pm2 process $PM2_NAME"
+# shellcheck disable=SC2016 # $1 and $HOME must expand on the VPS
 remote '
 cd "$HOME/$1" &&
 (pm2 restart nadgacha --update-env ||
@@ -119,15 +153,18 @@ pm2 save
 '
 
 echo "==> smoke test $PUBLIC_URL_CHECK/config"
-for _ in $(seq 1 30); do
-  if body="$(curl -fsS --max-time 5 "$PUBLIC_URL_CHECK/config" 2>/dev/null)"; then
-    chain_id="$(printf '%s' "$body" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0, "utf8")).chainId))')"
-    echo "OK: server is up, chainId=$chain_id"
-    exit 0
+deadline=$((SECONDS + 30))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  if body="$(curl -fsS --max-time 3 "$PUBLIC_URL_CHECK/config" 2>/dev/null)"; then
+    # A non-JSON answer (proxy error page, SPA fallback) is not healthy: keep polling.
+    if chain_id="$(printf '%s' "$body" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0, "utf8")).chainId))' 2>/dev/null)"; then
+      echo "OK: server is up, chainId=$chain_id"
+      exit 0
+    fi
   fi
   sleep 1
 done
 
 echo "ERROR: smoke test failed after 30s; recent pm2 logs:" >&2
-remote 'pm2 logs nadgacha --lines 40 --nostream' >&2 || true
+remote 'pm2 logs nadgacha --lines 40 --nostream' >&2 || echo "(could not fetch pm2 logs)" >&2
 exit 1

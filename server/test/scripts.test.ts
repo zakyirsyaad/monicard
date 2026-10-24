@@ -100,7 +100,26 @@ describe('deploy-vps.sh', () => {
     expect(text).not.toContain('--delete-excluded');
     expect(text).not.toMatch(/pm2 (delete|kill|update)/);
     expect(text).not.toMatch(/pm2 \w+ all\b/);
-    expect(text).not.toMatch(/ all\b/);
+    const pm2Lines = text.split('\n').filter((line) => line.includes('pm2 '));
+    for (const line of pm2Lines) expect(line).not.toMatch(/\ball\b/);
+  });
+
+  test('guards against clobbering the remote .env and dangerous VPS_DIR values', () => {
+    expect(text).toMatch(/env_status/);
+    expect(text).toMatch(/VPS_DIR must be a relative path/);
+    expect(text).toContain('command -v "$tool"');
+    expect(text).toContain('CI=true npx -y pnpm@12.10.1');
+  });
+
+  test('rejects an unsafe VPS_DIR before touching ssh or rsync', () => {
+    for (const dir of ['', '.', '..', '/etc', '../x', 'a/../..']) {
+      const result = spawnSync('bash', [deployPath], {
+        encoding: 'utf8',
+        env: { ...process.env, VPS_DIR: dir, VPS_HOST: 'invalid.invalid' },
+      });
+      expect(result.status, `VPS_DIR=${JSON.stringify(dir)}`).toBe(2);
+      expect(result.stderr).toContain('VPS_DIR must be a relative path');
+    }
   });
 
   test('installs through the pinned pnpm via npx, never the global one', () => {

@@ -44,6 +44,7 @@ if [ -n "${pm_id:-}" ]; then
   exec "$TSX" "$MAIN"
 fi
 
+# shellcheck disable=SC2016 # "$@" must expand inside the inner bash, not here
 LOOP='until "$@"; do echo "server exited, restarting in 1s"; sleep 1; done'
 echo "==> starting server (auto-restart loop)"
 if command -v caffeinate >/dev/null 2>&1; then
