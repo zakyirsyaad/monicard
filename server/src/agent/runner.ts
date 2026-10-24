@@ -133,7 +133,7 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
     return null;
   }
 
-  /** The wallet's last-pulled card, cached after the first successful read. */
+  /** The wallet's last-pulled card; only a nonzero result is cached, so a missing card is retried. */
   async function agentCard(): Promise<bigint> {
     if (agentCardId !== null) return agentCardId;
     const id = await chain.call((client) =>
@@ -144,8 +144,28 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
         args: [queue.address],
       }),
     );
-    agentCardId = id;
+    if (id !== 0n) agentCardId = id;
     return id;
+  }
+
+  /**
+   * The card's current owner, or null when it cannot be read (burned or
+   * nonexistent). `cardOf` is pull-time state that survives a transfer, so
+   * ownership must come from `ownerOf` before joining.
+   */
+  async function cardOwner(cardId: bigint): Promise<Hex | null> {
+    try {
+      return await chain.call((client) =>
+        client.readContract({
+          address: contracts.cards,
+          abi: nadCardsAbi,
+          functionName: 'ownerOf',
+          args: [cardId],
+        }),
+      );
+    } catch {
+      return null;
+    }
   }
 
   async function readElement(cardId: number | bigint): Promise<number | null> {
@@ -268,9 +288,19 @@ export function createAgentRunner(deps: AgentRunnerDeps): AgentRunner {
         return 'not_open';
       }
 
+      const owner = await cardOwner(cardId);
+      if (owner === null || lower(owner) !== lower(queue.address)) {
+        // cardOf can point at a card the wallet no longer owns; never play it.
+        agentCardId = null;
+        log(`agent: card ${cardId} for duel ${duelId} is not owned by the agent, skipping join`);
+        return 'not_open';
+      }
+
       const elements = await readElements(cardId, duel.card1);
       const receipt = await join(duelId, cardId);
       if (receipt === null || receipt.status !== 'success') {
+        // Retry from cardOf next time: the card or join race may have changed.
+        agentCardId = null;
         log(`agent: joinDuel(${duelId}) did not succeed`);
         return 'not_open';
       }

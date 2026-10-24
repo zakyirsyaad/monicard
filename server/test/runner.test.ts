@@ -79,6 +79,7 @@ const isJoin = (data: Hex): boolean => {
 
 const defaultRead = async ({ functionName, args }: ReadArgs): Promise<unknown> => {
   if (functionName === 'cardOf') return 7n;
+  if (functionName === 'ownerOf') return AGENT;
   if (functionName === 'cards') return { element: Number(args?.[0]) === 3 ? 0 : 1 };
   if (functionName === 'getDuels') return [];
   throw new Error(`unexpected read ${functionName}`);
@@ -254,6 +255,123 @@ describe('createAgentRunner challenge guards', () => {
     expect(h.sent).toHaveLength(0);
     expect(h.logs.some((l) => l.msg.includes('no card'))).toBe(true);
     expect(h.runner.busy()).toBe(false);
+  });
+
+  test('does not cache a zero card, so the next challenge can join', async () => {
+    let card = 0n;
+    const h = makeHarness({
+      duel: openDuel(),
+      created: 90,
+      block: 100,
+      readContract: async ({ functionName, args }) => {
+        if (functionName === 'cardOf') return card;
+        return defaultRead({ address: CARDS, functionName, args });
+      },
+      onSend: (req) => finishOnJoin(h)(req),
+    });
+
+    expect(await h.runner.challenge(1n)).toBe('not_open');
+    expect(h.sent).toHaveLength(0);
+
+    card = 7n;
+    expect(await h.runner.challenge(1n)).toBe('ok');
+    await waitIdle(h.runner);
+
+    expect(h.sent).toHaveLength(1);
+    expect(decodeFunctionData({ abi: blitzArenaAbi, data: h.sent[0]!.data }).args).toEqual([1n, 7n]);
+  });
+
+  test('rejects a card the wallet no longer owns, then retries with the current card', async () => {
+    let card = 5n;
+    let owner: Hex = OTHER;
+    const h = makeHarness({
+      duel: openDuel(),
+      created: 90,
+      block: 100,
+      readContract: async ({ functionName, args }) => {
+        if (functionName === 'cardOf') return card;
+        if (functionName === 'ownerOf') return owner;
+        return defaultRead({ address: CARDS, functionName, args });
+      },
+      onSend: (req) => finishOnJoin(h)(req),
+    });
+
+    expect(await h.runner.challenge(1n)).toBe('not_open');
+    expect(h.sent).toHaveLength(0);
+    expect(h.logs).toHaveLength(1);
+    expect(h.logs[0]?.msg).toMatch(/card 5\b/);
+    expect(h.logs[0]?.msg).toMatch(/duel 1\b/);
+
+    card = 6n;
+    owner = AGENT;
+    expect(await h.runner.challenge(1n)).toBe('ok');
+    await waitIdle(h.runner);
+
+    expect(h.sent).toHaveLength(1);
+    expect(decodeFunctionData({ abi: blitzArenaAbi, data: h.sent[0]!.data }).args).toEqual([1n, 6n]);
+  });
+
+  test('not_open when ownerOf throws for the cached card, and forgets it', async () => {
+    let card = 7n;
+    let burned = true;
+    const h = makeHarness({
+      duel: openDuel(),
+      created: 90,
+      block: 100,
+      hubWait: async () => REVERTED,
+      readContract: async ({ functionName, args }) => {
+        if (functionName === 'cardOf') return card;
+        if (functionName === 'ownerOf') {
+          if (burned) throw new Error('ERC721: invalid token ID');
+          return AGENT;
+        }
+        return defaultRead({ address: CARDS, functionName, args });
+      },
+    });
+
+    expect(await h.runner.challenge(1n)).toBe('not_open');
+    expect(h.sent).toHaveLength(0);
+    expect(h.logs).toHaveLength(1);
+    expect(h.logs[0]?.msg).toMatch(/card 7\b/);
+    expect(h.logs[0]?.msg).toMatch(/duel 1\b/);
+
+    card = 8n;
+    burned = false;
+    expect(await h.runner.challenge(1n)).toBe('not_open');
+    expect(h.sent).toHaveLength(1);
+    expect(decodeFunctionData({ abi: blitzArenaAbi, data: h.sent[0]!.data }).args).toEqual([1n, 8n]);
+  });
+
+  test('clears the cached card after a failed join and joins with the next one', async () => {
+    let card = 7n;
+    let joins = 0;
+    let reverted = true;
+    const h = makeHarness({
+      duel: openDuel(),
+      created: 90,
+      block: 100,
+      hubWait: async () => (reverted ? REVERTED : RECEIPT),
+      readContract: async ({ functionName, args }) => {
+        if (functionName === 'cardOf') return card;
+        return defaultRead({ address: CARDS, functionName, args });
+      },
+      onSend: (req) => {
+        if (!isJoin(req.data)) return;
+        joins += 1;
+        if (joins === 2) h.state.view = endedDuel();
+      },
+    });
+
+    expect(await h.runner.challenge(1n)).toBe('not_open');
+    expect(h.sent).toHaveLength(1);
+
+    card = 9n;
+    reverted = false;
+    expect(await h.runner.challenge(1n)).toBe('ok');
+    await waitIdle(h.runner);
+
+    expect(h.sent).toHaveLength(2);
+    expect(decodeFunctionData({ abi: blitzArenaAbi, data: h.sent[1]!.data }).args).toEqual([1n, 9n]);
   });
 });
 
