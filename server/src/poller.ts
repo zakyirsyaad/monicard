@@ -11,8 +11,12 @@ export const ACTIVE_WINDOW_SIZE = 64;
 export const TREASURY_REFRESH_MS = 10_000;
 /** First wait (in blocks) before a settle whose send finished but is still not visible is sent again; doubles per attempt. */
 export const SETTLE_RETRY_BLOCKS = 10;
-/** After this many sends for one duel the poller gives up on it (logged once). */
+/** After this many sends for one duel the poller pauses it (logged once per cycle). */
 export const MAX_SETTLE_ATTEMPTS = 5;
+/** A paused settle becomes eligible again (attempts reset to 0) after this many blocks (~3 min). */
+export const SETTLE_COOLOFF_BLOCKS = 600;
+/** Hard cap on unsubscribed duels kept outside the window (unsettled, waiting for settle); oldest ids dropped first. */
+export const MAX_UNSETTLED_STICKY = 64;
 /** Settle sends whose operator.send promise is still pending; the rest wait for the next poll. */
 export const MAX_SETTLES_IN_FLIGHT = 8;
 /** `duelCount()` is re-read this often (alongside the treasury) to heal missed DuelCreated logs. */
@@ -183,7 +187,14 @@ export function startPoller(deps: PollerDeps): Poller {
   /** Does a duel outside the window still deserve a cache slot? */
   function keepSticky(d: DuelView, subs: ReadonlySet<string>): boolean {
     if (subs.has(d.id)) return true;
-    return d.status !== 'Open' && !d.settled && !settleState.get(d.id)?.gaveUp;
+    return d.status !== 'Open' && !d.settled;
+  }
+
+  /** Keeps at most MAX_UNSETTLED_STICKY unsubscribed duels (newest ids win); subscribed ones are never dropped. */
+  function capUnsubscribed(next: Map<string, DuelView>, subs: ReadonlySet<string>): Map<string, DuelView> {
+    const loose = [...next.keys()].filter((id) => !subs.has(id)).sort((a, b) => (BigInt(a) < BigInt(b) ? 1 : -1));
+    const dropped = new Set(loose.slice(MAX_UNSETTLED_STICKY));
+    return dropped.size === 0 ? next : new Map([...next].filter(([id]) => !dropped.has(id)));
   }
 
   async function readOne(id: string): Promise<DuelView | null> {
@@ -203,7 +214,10 @@ export function startPoller(deps: PollerDeps): Poller {
     const due = (id: string): boolean => {
       const d = views.get(id);
       if (!d) return true;
-      return !d.settled && (subs.has(id) || FINISHED.has(d.status) || block >= d.endBlock);
+      if (d.settled) return false;
+      const st = settleState.get(id);
+      if (!subs.has(id) && st?.gaveUp && block < st.retryAt) return false; // cooling off: nothing new to learn
+      return subs.has(id) || FINISHED.has(d.status) || block >= d.endBlock;
     };
     return ids
       .filter(due)
@@ -232,7 +246,7 @@ export function startPoller(deps: PollerDeps): Poller {
       const d = fresh[reads.indexOf(id)] ?? views.get(id);
       if (d && keepSticky(d, subs)) next.set(id, d);
     }
-    return next;
+    return capUnsubscribed(next, subs);
   }
 
   // ------------------------------------------------------------------ settle
@@ -271,11 +285,15 @@ export function startPoller(deps: PollerDeps): Poller {
     dropFinishedSettleState(new Map(views.map((d) => [d.id, d])));
     let pending = [...settleState.values()].filter((st) => st.pending).length;
     for (const id of selectSettleable(views, block)) {
-      const st = settleState.get(id);
-      if (st && (st.pending || st.gaveUp || block < st.retryAt)) continue;
-      if (st && st.attempts >= MAX_SETTLE_ATTEMPTS) {
-        st.gaveUp = true;
-        console.error(`poller: giving up on settle(${id}) after ${st.attempts} attempts`);
+      let st = settleState.get(id);
+      if (st && (st.pending || block < st.retryAt)) continue;
+      if (st?.gaveUp) {
+        console.error(`poller: settle retry after cool-off for duel ${id}`);
+        settleErrorsLogged.delete(id);
+        st = undefined; // new cycle: attempts back to 0
+      } else if (st && st.attempts >= MAX_SETTLE_ATTEMPTS) {
+        settleState.set(id, { ...st, gaveUp: true, retryAt: block + SETTLE_COOLOFF_BLOCKS });
+        console.error(`poller: giving up on settle(${id}) after ${st.attempts} attempts, cool-off ${SETTLE_COOLOFF_BLOCKS} blocks`);
         continue;
       }
       if (pending >= MAX_SETTLES_IN_FLIGHT) return;
@@ -378,9 +396,16 @@ export function startPoller(deps: PollerDeps): Poller {
     requestPoll(block);
   });
 
+  /** The last snapshot plus the phone's own duel when it is cached but was not part of that broadcast. */
+  function replayFor(msg: DuelsMsg, duelId: string): DuelsMsg {
+    const cached = cache.get(duelId);
+    if (!cached || msg.duels.some((d) => d.id === duelId)) return msg;
+    return { ...msg, duels: [...msg.duels, cached] };
+  }
+
   // The hub's `send` applies the connection's scope filter, so a phone only sees its own duel.
-  ws.onConnect((send) => {
-    if (lastDuels) send(lastDuels);
+  ws.onConnect((send, scope) => {
+    if (lastDuels) send(scope === 'all' ? lastDuels : replayFor(lastDuels, scope.duelId));
     if (lastStats) send(lastStats);
     const agent = deps.getAgentMessage();
     if (agent) send(agent);

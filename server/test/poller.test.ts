@@ -6,6 +6,8 @@ import {
   DUEL_COUNT_RESYNC_MS,
   MAX_SETTLES_IN_FLIGHT,
   MAX_SETTLE_ATTEMPTS,
+  MAX_UNSETTLED_STICKY,
+  SETTLE_COOLOFF_BLOCKS,
   SETTLE_RETRY_BLOCKS,
   STICKY_READS_PER_POLL,
   TREASURY_REFRESH_MS,
@@ -638,7 +640,7 @@ describe('settle in flight, backoff and caps', () => {
     expect(h.operator.send).toHaveBeenCalledTimes(2);
   });
 
-  test('backs off 10 -> 20 -> 40 blocks and gives up after MAX_SETTLE_ATTEMPTS (logged once)', async () => {
+  test('backs off 10 -> 20 -> 40 blocks and gives up after MAX_SETTLE_ATTEMPTS (logged once per cycle)', async () => {
     h = makeHarness({ duelCount: 1n, table: one() });
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     let polls = 0;
@@ -661,9 +663,8 @@ describe('settle in flight, backoff and caps', () => {
     expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLE_ATTEMPTS);
     await pollAt(809);
     expect(errors.mock.calls.filter(([m]) => String(m).includes('giving up'))).toHaveLength(0);
-    await pollAt(810);
-    await pollAt(2000);
-    await pollAt(9000);
+    await pollAt(810); // wait over, attempts exhausted: pause
+    await pollAt(2000 - 600); // still cooling off (810 + 600 = 1410)
     expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLE_ATTEMPTS);
     expect(errors.mock.calls.filter(([m]) => String(m).includes('giving up'))).toHaveLength(1);
   });
@@ -738,5 +739,132 @@ describe('duelCount resync and failed polls', () => {
     expect(h.types('stats')[1]).toMatchObject({ block: '501', txTotal: 5 });
     expect(h.types('duels')).toHaveLength(1);
     expect(h.poller.latestBlock()).toBe(500);
+  });
+});
+
+describe('settle cool-off and unsettled sticky cap', () => {
+  let h: Harness;
+  afterEach(() => h?.poller.stop());
+  const logs = (spy: { mock: { calls: unknown[][] } }, text: string) =>
+    spy.mock.calls.filter(([m]) => String(m).includes(text)).length;
+
+  /** Polls at `block` and waits until the poll finished and the send promise handlers ran. */
+  function poller() {
+    let polls = 0;
+    return async (block: number, receipts: TransactionReceipt[] = []) => {
+      h.ingest(block, receipts);
+      await flush(h, ++polls);
+      await tick();
+    };
+  }
+
+  test('after giving up, retries once SETTLE_COOLOFF_BLOCKS passed, resets attempts and succeeds', async () => {
+    h = makeHarness({ duelCount: 1n, table: [raw({ id: '0', status: 'P1Won' })] });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    h.operator.send.mockRejectedValue(new Error('out of gas'));
+    const at = poller();
+    for (const block of [500, 510, 530, 570, 650]) await at(block);
+    expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLE_ATTEMPTS);
+    await at(810); // gives up, cool-off starts here
+    expect(logs(errors, 'giving up')).toBe(1);
+    await at(810 + SETTLE_COOLOFF_BLOCKS - 1);
+    expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLE_ATTEMPTS);
+    h.operator.send.mockResolvedValue('0xabc' as Hex); // operator recovered
+    await at(810 + SETTLE_COOLOFF_BLOCKS);
+    expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLE_ATTEMPTS + 1);
+    expect(logs(errors, 'retry after cool-off')).toBe(1);
+    // attempts were reset: the next wait is the first backoff (10), not the fifth (160)
+    await at(810 + SETTLE_COOLOFF_BLOCKS + SETTLE_RETRY_BLOCKS - 1);
+    expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLE_ATTEMPTS + 1);
+    await at(810 + SETTLE_COOLOFF_BLOCKS + SETTLE_RETRY_BLOCKS);
+    expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLE_ATTEMPTS + 2);
+  });
+
+  test('a settled duel clears its settle state, so a later unsettled view is settled afresh', async () => {
+    h = makeHarness({ duelCount: 1n, table: [raw({ id: '0', status: 'P1Won' })] });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    h.operator.send.mockRejectedValue(new Error('x'));
+    const at = poller();
+    for (const block of [500, 510, 530, 570, 650, 810]) await at(block); // gave up
+    h.state.table = [raw({ id: '0', status: 'P1Won', settled: true })];
+    await at(811);
+    h.state.table = [raw({ id: '0', status: 'P1Won' })];
+    await at(812); // no cool-off, no backoff left over
+    expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLE_ATTEMPTS + 1);
+  });
+
+  test('an evicted, finished, unsubscribed duel stays cached through give-up and cool-off until settled', async () => {
+    h = makeHarness({ duelCount: 60n, table: bigTable(70, (i) => (i === 5 ? { status: 'P1Won' } : {})) });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    h.operator.send.mockRejectedValue(new Error('rpc down'));
+    const at = poller();
+    await at(500); // attempt 1, duel 5 still in the window
+    await at(501, [duelCreatedReceipt(69n, 501n)]); // duel 5 leaves the window
+    expect(h.poller.getDuel('5')).toBeDefined();
+    expect(idsOf(h.types('duels')[1])).not.toContain('5'); // not re-broadcast to scope all
+    for (const block of [510, 530, 570, 650, 810]) await at(block);
+    expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLE_ATTEMPTS);
+    expect(h.poller.getDuel('5')).toBeDefined(); // paused, but still cached
+    const readsDuringCooloff = singleReads(h).length;
+    await at(900);
+    expect(singleReads(h)).toHaveLength(readsDuringCooloff); // no re-reads while cooling off
+    h.operator.send.mockResolvedValue('0xabc' as Hex);
+    await at(810 + SETTLE_COOLOFF_BLOCKS);
+    expect(h.operator.send).toHaveBeenCalledTimes(MAX_SETTLE_ATTEMPTS + 1);
+    h.state.table = bigTable(70, (i) => (i === 5 ? { status: 'P1Won', settled: true } : {}));
+    await at(810 + SETTLE_COOLOFF_BLOCKS + 1);
+    await at(810 + SETTLE_COOLOFF_BLOCKS + 2);
+    expect(h.poller.getDuel('5')).toBeUndefined(); // settled and unsubscribed: dropped
+  });
+
+  test('unsubscribed unsettled sticky duels are capped at MAX_UNSETTLED_STICKY, oldest dropped first', async () => {
+    h = makeHarness({ duelCount: 70n, table: bigTable(200) });
+    const at = poller();
+    await at(500); // window 6..69
+    await at(501, [duelCreatedReceipt(99n, 501n)]); // window 36..99; 6..35 become sticky
+    await at(502, [duelCreatedReceipt(135n, 502n)]); // window 72..135; 36..71 join them: 66 unsubscribed
+    expect(h.poller.duels()).toHaveLength(64 + MAX_UNSETTLED_STICKY);
+    expect(h.poller.getDuel('71')).toBeDefined();
+    expect(h.poller.getDuel('8')).toBeDefined();
+    expect(h.poller.getDuel('7')).toBeUndefined();
+    expect(h.poller.getDuel('6')).toBeUndefined();
+    expect(idsOf(h.types('duels')[2])).toHaveLength(64);
+  });
+
+  test('subscribed sticky duels do not count towards the cap and are never dropped by it', async () => {
+    h = makeHarness({ duelCount: 70n, table: bigTable(200) });
+    h.subs.add('6');
+    const at = poller();
+    await at(500);
+    await at(501, [duelCreatedReceipt(99n, 501n)]);
+    await at(502, [duelCreatedReceipt(135n, 502n)]);
+    expect(h.poller.getDuel('6')).toBeDefined();
+    expect(h.poller.getDuel('7')).toBeUndefined(); // oldest unsubscribed one is dropped instead
+    expect(h.poller.duels()).toHaveLength(64 + MAX_UNSETTLED_STICKY + 1);
+  });
+});
+
+describe('reconnecting phone', () => {
+  let h: Harness;
+  afterEach(() => h?.poller.stop());
+
+  test('gets its cached out-of-window duel in the replayed snapshot straight away', async () => {
+    const { createWsHubCore } = await import('../src/ws');
+    // duel 5 is unsubscribed and running: cached as sticky but not part of the last broadcast
+    h = makeHarness({ duelCount: 60n, table: bigTable(70) });
+    h.ingest(500);
+    await flush(h, 1);
+    h.ingest(501, [duelCreatedReceipt(69n, 501n)]);
+    await flush(h, 2);
+    expect(idsOf(h.types('duels')[1])).not.toContain('5');
+    const core = createWsHubCore();
+    core.onConnect(h.connectCbs[0]!);
+    const out: string[] = [];
+    core.add({ send: (d) => void out.push(d), readyState: 1 }, { duelId: '5' });
+    expect((JSON.parse(out[0]!) as DuelsMsg).duels.map((d) => d.id)).toEqual(['5']);
+    // an 'all' connection still gets the unmodified broadcast
+    const all: string[] = [];
+    core.add({ send: (d) => void all.push(d), readyState: 1 }, 'all');
+    expect(idsOf(JSON.parse(all[0]!) as DuelsMsg)).not.toContain('5');
   });
 });

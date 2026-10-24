@@ -229,4 +229,12 @@ describe('ws hub core', () => {
     core.broadcast(statsMsg);
     expect(slow.sent).toHaveLength(1);
   });
+
+  test('the connection is subscribed before onConnect callbacks run', () => {
+    const core = createWsHubCore();
+    const seen: Set<string>[] = [];
+    core.onConnect(() => void seen.push(core.subscribedIds()));
+    core.add(fakeSocket().sock, { duelId: '12' });
+    expect(seen).toEqual([new Set(['12'])]);
+  });
 });
