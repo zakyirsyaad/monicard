@@ -67,21 +67,35 @@ pnpm -F @nad/web test               # web
 
 Repo layout: `contracts/` (Foundry), `shared/` (game formulas + ABIs), `server/` (relay, watcher, AI Agent, card art), `web/` (Vite + React).
 
-## Built for Monad
+## Who it's for
 
-1. **Clamp, never revert.** On Monad a reverted tx still pays its full gas limit, so late, early or oversized taps are clamped instead of reverting.
-2. **Small hot path, fixed cost.** `attack()` touches only its own duel's 3 storage slots and calls no other contract; win/loss recording moves to `settle()`. The gas limit stays tight and predictable, which matters because Monad charges by gas limit.
-3. **Isolated state per duel.** Different duels never touch the same slot, so they execute in parallel.
-4. **MIP-8 makes every tap cheaper.** One duel is 3 consecutive slots, so `attack()` pays one cold page read instead of three. Measured with `cast estimate`: _TODO numbers_.
+- **First customer: organisers of web3 community events** (meetups, hackathons) who need an onchain onboarding activity that people actually enjoy.
+- **Players** scan a QR code and are playing in about 3 seconds: no wallet app, no seed phrase. Every tap is a transaction anyone can verify.
+- **Organisers** get a branded projector screen, live stats and provable onchain engagement for their sponsors.
 
 ## Business model
 
-| Model | Status |
-|---|---|
-| Paid packs: first pull free, then 0.05 MON, odds shown and rolled onchain; funds stay in the `NadCards` treasury | Live (`paidPull`) |
-| 5% marketplace royalty (ERC-2981) | In the contract |
-| Sponsored event arenas: branded projector view with live player, duel, tx and treasury stats | Live (`/arena`) |
-| Staked duels (winner takes the pot, 5% fee) | Roadmap |
+| Stream | How | Status |
+|---|---|---|
+| Event mode (B2B) | Organisers pay for a branded arena; the relay subsidises players' gas | Live (`/arena`) |
+| Paid packs | First pull free, then 0.05 MON per pack, odds shown and rolled onchain; funds go to the contract treasury (`paidPull` / `withdraw`) | Live |
+| Marketplace royalty | 5% on every resale (ERC-2981) | Live (in the contract) |
+| Season pass, cosmetics, staked duels | Depends on local regulation | Roadmap |
+
+Unit cost: one `attack` tx = 62,000 gas ≈ 0.006 MON at 102 gwei.
+
+## What's new / Why Monad
+
+- **Gameplay is onchain, tap by tap**, not just NFT ownership. A 20-second duel is dozens of real transactions.
+- **Every duel lives in its own 3 storage slots**, so duels never touch the same state and execute in parallel on Monad. One duel is 3 consecutive slots, so MIP-8 makes every tap cheaper.
+- **Built around Monad's rules:**
+  - timing uses `block.number`, never the 1-second-resolution timestamp;
+  - late or excess taps are clamped instead of reverting, because Monad charges by gas limit;
+  - `attack()` touches only its duel and calls no other contract, so its gas limit stays tight;
+  - the server's tx queue respects Monad's reserve-balance rule;
+  - the server makes one `eth_getBlockReceipts` call per block, no matter how many people play.
+- **An AI Agent that learns.** It plays with its own wallet; after each duel a coach adjusts its policy and publishes the lesson. Its win/loss record is onchain.
+- **Original IP.** The Nadmon roster is our own design.
 
 ## Roadmap
 
