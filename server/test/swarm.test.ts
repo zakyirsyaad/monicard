@@ -309,4 +309,69 @@ describe('createSwarm', () => {
     expect(onError).toHaveBeenCalledTimes(3);
     expect(onError.mock.calls[0]![1]).toEqual({ pair: 0, round: 0 });
   });
+
+  test('an unreadable bot balance is reported and the rest keep their pairing order', async () => {
+    const bots = Array.from({ length: 5 }, (_, i) => makeBot(i + 1));
+    const unreadable = bots[1]!;
+    const balances = funded(bots);
+    const onError = vi.fn();
+    const calls: RunDuelPairOpts[] = [];
+    const swarm = createSwarm({
+      bots,
+      readDuel: async () => null,
+      readBlock: async () => 0,
+      balanceOf: async (address) => {
+        if (address === unreadable.address) throw new Error('rpc 429');
+        return balances.get(address) ?? ZERO;
+      },
+      duelCostWei: () => COST,
+      rng: () => 0,
+      onError,
+      runPair: async (o) => {
+        calls.push(o);
+        return duelResult();
+      },
+    });
+
+    await expect(swarm.start(5, 1)).resolves.toBeUndefined();
+
+    // Eligible bots keep their input order: 1, 3, 4, 5 -> (1, 3) and (4, 5).
+    expect(calls.map((c) => [c.p1.cardId, c.p2.cardId])).toEqual([[1n, 3n], [4n, 5n]]);
+    expect(calls.some((c) => c.p1.cardId === unreadable.cardId || c.p2.cardId === unreadable.cardId)).toBe(false);
+    expect(onError).toHaveBeenCalledTimes(1);
+    const [error, ctx] = onError.mock.calls[0]!;
+    expect(ctx).toEqual({ pair: -1, round: 0 });
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(unreadable.address);
+    expect((error as Error).cause).toBeInstanceOf(Error);
+  });
+
+  test('a rejected balance that leaves fewer than two eligible bots resolves with no duels', async () => {
+    const bots = [makeBot(1), makeBot(2)];
+    const onError = vi.fn();
+    const calls: RunDuelPairOpts[] = [];
+    const swarm = createSwarm({
+      bots,
+      readDuel: async () => null,
+      readBlock: async () => 0,
+      balanceOf: async (address) => {
+        if (address === bots[0]!.address) throw new Error('rpc 429');
+        return COST;
+      },
+      duelCostWei: () => COST,
+      rng: () => 0,
+      onError,
+      runPair: async (o) => {
+        calls.push(o);
+        return duelResult();
+      },
+    });
+
+    await expect(swarm.start(1, 2)).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(0);
+    expect(swarm.running()).toBe(0);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]![1]).toEqual({ pair: -1, round: 0 });
+  });
 });

@@ -16,6 +16,11 @@ export type SwarmDeps = {
   /** Budget one bot needs for one duel (see `estimateDuelCostWei`). */
   duelCostWei: () => bigint;
   rng?: () => number;
+  /**
+   * Non-fatal failure sink. `pair` is `SWARM_SETUP_PAIR` (-1) for failures before any pair
+   * exists (the initial balance sweep); the error then names the bot address and carries the
+   * original failure as `cause`.
+   */
   onError?: (err: unknown, ctx: { pair: number; round: number }) => void;
   /** Blocks per attack batch: 10 is ≈3 s at Monad's 0.3 s blocks, at most 30 taps per tx. */
   batchBlocks?: number;
@@ -34,6 +39,9 @@ export type Swarm = {
 export const DEFAULT_BATCH_BLOCKS = 10;
 export const MAX_CONSECUTIVE_FAILURES = 3;
 export const MIN_TAPS_PER_SEC = 5;
+/** `onError` context for failures before any pair exists (the initial balance sweep). */
+export const SWARM_SETUP_PAIR = -1;
+const SETUP_ROUND = 0;
 const TAP_SPAN = 4;
 const MIN_SKILL_THRESHOLD = 10;
 const SKILL_THRESHOLD_CHOICES = 81;
@@ -129,10 +137,28 @@ export function createSwarm(deps: SwarmDeps): Swarm {
     }
   }
 
+  /**
+   * Reads every balance in parallel. `allSettled` keeps one 429/5xx from aborting the whole
+   * start: an unreadable bot is simply ineligible and is reported with its address.
+   */
+  async function initialEligibleBots(cost: bigint): Promise<SwarmBot[]> {
+    const settled = await Promise.allSettled(deps.bots.map((bot) => deps.balanceOf(bot.address)));
+    const eligible: SwarmBot[] = [];
+    for (const [index, bot] of deps.bots.entries()) {
+      const outcome = settled[index];
+      if (outcome === undefined) continue;
+      if (outcome.status === 'rejected') {
+        const failure = new Error(`swarm: balance read failed for ${bot.address}`, { cause: outcome.reason });
+        onError(failure, { pair: SWARM_SETUP_PAIR, round: SETUP_ROUND });
+      } else if (outcome.value >= cost) {
+        eligible.push(bot);
+      }
+    }
+    return eligible;
+  }
+
   async function run(pairs: number, rounds: number): Promise<void> {
-    const cost = deps.duelCostWei();
-    const balances = await Promise.all(deps.bots.map((bot) => deps.balanceOf(bot.address)));
-    const eligible = deps.bots.filter((_, index) => (balances[index] ?? 0n) >= cost);
+    const eligible = await initialEligibleBots(deps.duelCostWei());
     const count = Math.min(pairs, Math.floor(eligible.length / 2));
 
     activePairs = count;
