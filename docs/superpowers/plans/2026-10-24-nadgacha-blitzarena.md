@@ -147,7 +147,8 @@ monad-tcg/
 type WsMessage =
   | { type: 'duels'; block: string; duels: DuelView[]; featuredId: string | null }   // server mengisi featuredId dengan duel non-bot terbaru kalau admin belum memilih
   | { type: 'stats'; block: string; txTotal: number; txPerSec: number; avgLatencyMs: number;
-      uniquePlayers: number; totalDuels: number; treasury: string }   // 3 field terakhir 0/'0' sampai Task 15s
+      uniquePlayers: number; totalDuels: number; treasury: string;
+      lastTxHash?: Hex }   // 3 field sebelum lastTxHash 0/'0' sampai Task 15s; lastTxHash (disetujui user 11:09) = hash tx relay/bot terakhir yang masuk blok, diisi poller di Task 8, opsional
   | { type: 'leaderboard'; entries: { address: Hex; label: string | null; wins: number; losses: number; cardId: string }[] }  // top 10, tanpa bot
   | { type: 'agent'; level: number; threshold: number; finisher: boolean;
       sim: { duels: number; wins: number }; testnet: { duels: number; wins: number };
