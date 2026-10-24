@@ -6,6 +6,7 @@ import {
   formatBlock,
   formatInt,
   formatMs,
+  formatMon,
   formatRecord,
   shortHex,
 } from '../src/lib/format';
@@ -64,5 +65,12 @@ describe('explorer links', () => {
 describe('formatRecord', () => {
   it('formats wins and losses', () => {
     expect(formatRecord(12, 4)).toBe('12 W · 4 L');
+  });
+});
+
+describe('formatMon', () => {
+  it('drops trailing zeros', () => {
+    expect(formatMon('50000000000000000')).toBe('0.05');
+    expect(formatMon(1_000_000_000_000_000_000n)).toBe('1');
   });
 });

@@ -1,3 +1,5 @@
+import { formatEther } from 'viem';
+
 export const EXPLORER = 'https://testnet.monadscan.com';
 
 const intFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
@@ -31,4 +33,9 @@ export const explorerAddress = (addr: string): string => `${EXPLORER}/address/${
 /** Win/loss record: "12 W · 4 L". */
 export function formatRecord(wins: number, losses: number): string {
   return `${formatInt(wins)} W · ${formatInt(losses)} L`;
+}
+
+/** MON amount without trailing zeros: 50000000000000000 wei -> "0.05". */
+export function formatMon(wei: string | bigint): string {
+  return Number(formatEther(BigInt(wei))).toString();
 }

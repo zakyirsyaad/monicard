@@ -14,3 +14,10 @@ export const rarityBorderClass = [
   'border-rarity-epic',
   'border-rarity-legendary',
 ] as const;
+
+export const rarityTextClass = [
+  'text-rarity-common',
+  'text-rarity-rare',
+  'text-rarity-epic',
+  'text-rarity-legendary',
+] as const;

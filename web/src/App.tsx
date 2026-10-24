@@ -1,5 +1,8 @@
 import { Route, Routes } from 'react-router-dom';
 import { Dev } from './routes/Dev';
+import { Home } from './routes/Home';
+import { Play } from './routes/Play';
+import { Pull } from './routes/Pull';
 
 function Placeholder({ name }: { name: string }) {
   return (
@@ -12,9 +15,9 @@ function Placeholder({ name }: { name: string }) {
 export function App() {
   return (
     <Routes>
-      <Route path="/" element={<Placeholder name="Home" />} />
-      <Route path="/pull" element={<Placeholder name="Pull" />} />
-      <Route path="/play" element={<Placeholder name="Play" />} />
+      <Route path="/" element={<Home />} />
+      <Route path="/pull" element={<Pull />} />
+      <Route path="/play" element={<Play />} />
       <Route path="/duel/:id" element={<Placeholder name="Duel" />} />
       <Route path="/arena" element={<Placeholder name="Arena" />} />
       <Route path="/dev" element={<Dev />} />
