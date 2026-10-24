@@ -2,3 +2,6 @@ packages:
   - shared
   - server
   - web
+
+allowBuilds:
+  esbuild: true
