@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "test:shared": "pnpm -F @nad/shared test",
-    "export-abi": "pnpm -F @nad/shared export-abi"
+    "export-abi": "pnpm -F @nad/shared export-abi",
+    "local": "pnpm -F server exec tsx scripts/local.ts"
   },
   "packageManager": "pnpm@12.10.1",
   "engines": {

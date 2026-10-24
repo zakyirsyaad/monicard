@@ -71,9 +71,15 @@ async function waitUntilReady(child: ChildProcess, rpcUrl: string, output: () =>
   throw new Error(`anvil not ready after ${READY_TIMEOUT_MS} ms:\n${output()}`);
 }
 
-/** Start `anvil --no-mining` on chain id 10143 and resolve once it answers JSON-RPC. */
-export async function startAnvil(port = DEFAULT_PORT): Promise<AnvilHandle> {
-  const child = spawn('anvil', ['--chain-id', String(ANVIL_CHAIN_ID), '--no-mining', '--port', String(port)], {
+export type StartAnvilOptions = {
+  /** Mine on a timer (`--block-time <n>`, fractions allowed) instead of the default `--no-mining`. */
+  blockTimeSec?: number;
+};
+
+/** Start `anvil --no-mining` (or `--block-time n`) on chain id 10143 and resolve once it answers JSON-RPC. */
+export async function startAnvil(port = DEFAULT_PORT, options: StartAnvilOptions = {}): Promise<AnvilHandle> {
+  const miningArgs = options.blockTimeSec === undefined ? ['--no-mining'] : ['--block-time', String(options.blockTimeSec)];
+  const child = spawn('anvil', ['--chain-id', String(ANVIL_CHAIN_ID), ...miningArgs, '--port', String(port)], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let buffer = '';
