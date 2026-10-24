@@ -1,9 +1,10 @@
-import { blitzArenaAbi, nadCardsAbi } from '@nad/shared';
+import { blitzArenaAbi, nadCardsAbi, stakeVaultAbi } from '@nad/shared';
 import {
   encodeAbiParameters,
   encodeEventTopics,
   encodeFunctionData,
   keccak256,
+  parseEther,
   serializeTransaction,
   toHex,
   type Hex,
@@ -12,7 +13,16 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import { describe, expect, test, vi } from 'vitest';
 import { createReceiptHub, type ReceiptHub } from '../src/receiptHub';
-import { BALANCE_TIMEOUT_MS, RELAY_TIMEOUT_MS, createRateLimiter, handleRelay, validateRawTx, type RelayDeps } from '../src/relay';
+import {
+  BALANCE_TIMEOUT_MS,
+  RELAY_TIMEOUT_MS,
+  STAKE_MAX_WEI,
+  STAKE_MIN_WEI,
+  createRateLimiter,
+  handleRelay,
+  validateRawTx,
+  type RelayDeps,
+} from '../src/relay';
 
 // anvil's well-known public dev key #0 (test key, never holds value)
 const ANVIL_KEY: Hex = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
@@ -178,6 +188,87 @@ describe('validateRawTx', () => {
   test('rejects an unsigned type 2 tx', () => {
     const raw = serializeTransaction({ type: 'eip1559', chainId: 10143, nonce: 0, to: ARENA, data: attackData, gas: 70_000n, maxFeePerGas: MAX_FEE, maxPriorityFeePerGas: 1n });
     expect(validateRawTx(raw, CFG)).toEqual({ ok: false, reason: 'decode' });
+  });
+});
+
+describe('validateRawTx with StakeVault', () => {
+  const VAULT: Hex = '0x642C1364b62344128087549ceeD9268D5E3385df';
+  const VAULT_CFG = { ...CFG, stakeVault: VAULT, gasLimits: { ...GAS_LIMITS, stake: 131_000, claim: 154_000 } };
+  const stakeData = encodeFunctionData({ abi: stakeVaultAbi, functionName: 'stake', args: [1n] });
+  const claimData = encodeFunctionData({ abi: stakeVaultAbi, functionName: 'claim', args: [1n] });
+  const stakeTx = (o: TxOverrides = {}) => signTx({ to: VAULT, data: stakeData, value: parseEther('0.5'), gas: 131_000n, ...o });
+  const claimTx = (o: TxOverrides = {}) => signTx({ to: VAULT, data: claimData, value: 0n, gas: 154_000n, ...o });
+
+  test('exports the stake bounds', () => {
+    expect(STAKE_MIN_WEI).toBe(parseEther('0.001'));
+    expect(STAKE_MAX_WEI).toBe(parseEther('1'));
+  });
+
+  test.each(['0.001', '0.5', '1'])('accepts stake with value %s MON', async (mon) => {
+    const raw = await stakeTx({ value: parseEther(mon) });
+    expect(validateRawTx(raw, VAULT_CFG)).toMatchObject({ ok: true, fn: 'stake', value: parseEther(mon), hash: keccak256(raw) });
+  });
+
+  test.each([['0', 0n], ['0.0009', parseEther('0.0009')], ['1.0001', parseEther('1.0001')]])(
+    'rejects stake with value %s MON',
+    async (_label, value) => {
+      expect(validateRawTx(await stakeTx({ value }), VAULT_CFG)).toEqual({ ok: false, reason: 'value' });
+    },
+  );
+
+  test('accepts claim with zero value and rejects claim with value', async () => {
+    expect(validateRawTx(await claimTx(), VAULT_CFG)).toMatchObject({ ok: true, fn: 'claim', value: 0n });
+    expect(validateRawTx(await claimTx({ value: 1n }), VAULT_CFG)).toEqual({ ok: false, reason: 'value' });
+  });
+
+  test('matches the vault address case-insensitively', async () => {
+    const cfg = { ...VAULT_CFG, stakeVault: VAULT.toLowerCase() as Hex };
+    expect(validateRawTx(await stakeTx(), cfg)).toMatchObject({ ok: true, fn: 'stake' });
+  });
+
+  test('stake gas: within the limit accepted, above rejected', async () => {
+    expect(validateRawTx(await stakeTx({ gas: 131_000n }), VAULT_CFG)).toMatchObject({ ok: true });
+    expect(validateRawTx(await stakeTx({ gas: 131_001n }), VAULT_CFG)).toEqual({ ok: false, reason: 'gas' });
+  });
+
+  test('claim gas: within the limit accepted, above rejected', async () => {
+    expect(validateRawTx(await claimTx({ gas: 154_000n }), VAULT_CFG)).toMatchObject({ ok: true });
+    expect(validateRawTx(await claimTx({ gas: 154_001n }), VAULT_CFG)).toEqual({ ok: false, reason: 'gas' });
+  });
+
+  test('rejects a vault tx with gas when the limit is missing from config', async () => {
+    const cfg = { ...VAULT_CFG, gasLimits: GAS_LIMITS };
+    expect(validateRawTx(await stakeTx(), cfg)).toEqual({ ok: false, reason: 'gas' });
+  });
+
+  test('rejects a vault tx with reason to when cfg.stakeVault is unset', async () => {
+    expect(validateRawTx(await stakeTx(), CFG)).toEqual({ ok: false, reason: 'to' });
+    expect(validateRawTx(await claimTx(), CFG)).toEqual({ ok: false, reason: 'to' });
+  });
+
+  test.each([
+    ['withdrawRake', [account.address]],
+    ['transferOwnership', [account.address]],
+    ['renounceOwnership', []],
+  ] as const)('rejects owner function %s on the vault with reason selector', async (functionName, args) => {
+    const data = encodeFunctionData({ abi: stakeVaultAbi, functionName, args } as never);
+    expect(validateRawTx(await signTx({ to: VAULT, data, gas: 100_000n }), VAULT_CFG)).toEqual({ ok: false, reason: 'selector' });
+  });
+
+  test('rejects empty calldata on the vault', async () => {
+    expect(validateRawTx(await signTx({ to: VAULT, data: '0x' }), VAULT_CFG)).toEqual({ ok: false, reason: 'selector' });
+  });
+
+  test('rejects the stake selector sent to the arena, and an arena call sent to the vault', async () => {
+    const cfg = VAULT_CFG;
+    expect(validateRawTx(await signTx({ to: ARENA, data: stakeData, value: parseEther('0.5'), gas: 70_000n }), cfg)).toEqual({ ok: false, reason: 'selector' });
+    expect(validateRawTx(await signTx({ to: VAULT, data: attackData }), cfg)).toEqual({ ok: false, reason: 'selector' });
+  });
+
+  test('cards and arena behave as before when the vault is configured', async () => {
+    expect(validateRawTx(await signTx(), VAULT_CFG)).toMatchObject({ ok: true, fn: 'attack' });
+    expect(validateRawTx(await signTx({ to: CARDS, data: paidPullData, value: PULL_PRICE, gas: 150_000n }), VAULT_CFG)).toMatchObject({ ok: true, fn: 'paidPull' });
+    expect(validateRawTx(await signTx({ value: 1n }), VAULT_CFG)).toEqual({ ok: false, reason: 'value' });
   });
 });
 

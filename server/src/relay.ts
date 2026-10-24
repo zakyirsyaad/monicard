@@ -1,8 +1,9 @@
-import { blitzArenaAbi, nadCardsAbi, type Hex } from '@nad/shared';
+import { blitzArenaAbi, nadCardsAbi, stakeVaultAbi, type Hex } from '@nad/shared';
 import {
   decodeFunctionData,
   isHex,
   keccak256,
+  parseEther,
   parseEventLogs,
   parseTransaction,
   recoverTransactionAddress,
@@ -24,11 +25,18 @@ const KNOWN_TX_ERRORS = ['already known', 'nonce too low', 'replacement transact
 
 const CARDS_FNS = ['freePull', 'paidPull'] as const;
 const ARENA_FNS = ['createDuel', 'joinDuel', 'attack', 'settle'] as const;
+const VAULT_FNS = ['stake', 'claim'] as const;
+
+/** Inclusive bounds of the value a `stake` tx may carry (mirrors StakeVault MIN_STAKE / MAX_STAKE). */
+export const STAKE_MIN_WEI = parseEther('0.001');
+export const STAKE_MAX_WEI = parseEther('1');
 
 export type RelayConfig = {
   chainId: number;
   cards: Hex;
   arena: Hex;
+  /** StakeVault address; vault txs are only relayed when set. */
+  stakeVault?: Hex;
   gasLimits: Record<string, number>;
   pullPrice: bigint;
 };
@@ -54,25 +62,45 @@ export function validateRawTx(raw: Hex, cfg: RelayConfig): Validation {
   if (gas === undefined || maxFeePerGas === undefined) return reject('decode');
   if (tx.chainId !== cfg.chainId) return reject('chain');
 
-  const to = tx.to?.toLowerCase();
-  const isCards = to === cfg.cards.toLowerCase();
-  if (!isCards && to !== cfg.arena.toLowerCase()) return reject('to');
+  const target = targetContract(tx.to, cfg);
+  if (!target) return reject('to');
 
-  const fn = decodeFn(isCards, tx.data ?? '0x');
+  const fn = decodeFn(target, tx.data ?? '0x');
   if (!fn) return reject('selector');
   const value = tx.value ?? 0n;
-  if (value !== (fn === 'paidPull' ? cfg.pullPrice : 0n)) return reject('value');
+  if (!isValueAllowed(fn, value, cfg)) return reject('value');
   const limit = cfg.gasLimits[fn];
   if (limit === undefined || gas > BigInt(limit)) return reject('gas');
   return { ok: true, hash: keccak256(raw), fn, gas, maxFeePerGas, value };
 }
 
+type Target = 'cards' | 'arena' | 'vault';
+
+const TARGET_ABIS = { cards: nadCardsAbi, arena: blitzArenaAbi, vault: stakeVaultAbi } as const;
+const TARGET_FNS: Record<Target, readonly string[]> = { cards: CARDS_FNS, arena: ARENA_FNS, vault: VAULT_FNS };
+
+/** Which of our contracts `to` is (case-insensitive); the vault only counts when configured. */
+function targetContract(to: string | null | undefined, cfg: RelayConfig): Target | null {
+  const addr = to?.toLowerCase();
+  if (!addr) return null;
+  if (addr === cfg.cards.toLowerCase()) return 'cards';
+  if (addr === cfg.arena.toLowerCase()) return 'arena';
+  if (cfg.stakeVault !== undefined && addr === cfg.stakeVault.toLowerCase()) return 'vault';
+  return null;
+}
+
+/** Exact value for paidPull, the stake range for stake, zero for everything else. */
+function isValueAllowed(fn: string, value: bigint, cfg: RelayConfig): boolean {
+  if (fn === 'paidPull') return value === cfg.pullPrice;
+  if (fn === 'stake') return value >= STAKE_MIN_WEI && value <= STAKE_MAX_WEI;
+  return value === 0n;
+}
+
 /** Name of the allowed function being called, or null when the selector is not allowed on that contract. */
-function decodeFn(isCards: boolean, data: Hex): string | null {
+function decodeFn(target: Target, data: Hex): string | null {
   try {
-    const { functionName } = decodeFunctionData({ abi: isCards ? nadCardsAbi : blitzArenaAbi, data });
-    const allowed: readonly string[] = isCards ? CARDS_FNS : ARENA_FNS;
-    return allowed.includes(functionName) ? functionName : null;
+    const { functionName } = decodeFunctionData({ abi: TARGET_ABIS[target], data });
+    return TARGET_FNS[target].includes(functionName) ? functionName : null;
   } catch {
     return null;
   }
