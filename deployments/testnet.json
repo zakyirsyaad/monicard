@@ -1,0 +1,14 @@
+{
+  "chainId": 10143,
+  "cards": "0x7AF33CB3823Ff99D37411A678452A7980d14CF9F",
+  "arena": "0xc08c323df6a5f9fAbaF75A6060E4CA357F2251f9",
+  "deployBlock": 73719179,
+  "gasLimits": {
+    "freePull": 189000,
+    "paidPull": 189000,
+    "createDuel": 122000,
+    "joinDuel": 137000,
+    "attack": 62000,
+    "settle": 107000
+  }
+}
