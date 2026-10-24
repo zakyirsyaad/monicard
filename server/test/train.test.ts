@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest';
+import type { ZodType } from 'zod';
+import type { Hex } from '@nad/shared';
+import type { Llm } from '../src/llm';
+import type { DuelSummary } from '../src/sim/types';
 import { emptyAgentData, type AgentData } from '../src/agent/policy';
-import { botProfile, parseTrainArgs, prepareTrainingData } from '../scripts/train';
+import { botProfile, isAgentData, makeCoach, newLlmStats, parseTrainArgs, prepareTrainingData } from '../scripts/train';
 
 describe('parseTrainArgs', () => {
   test('uses defaults when no flags are given', () => {
@@ -88,5 +92,89 @@ describe('botProfile', () => {
       expect(p.skillThreshold).toBeGreaterThanOrEqual(10);
       expect(p.skillThreshold).toBeLessThanOrEqual(90);
     }
+  });
+});
+
+describe('isAgentData', () => {
+  test('accepts a full agent file and the empty default', () => {
+    expect(isAgentData(emptyAgentData())).toBe(true);
+  });
+
+  test('rejects wrong shapes', () => {
+    expect(isAgentData(null)).toBe(false);
+    expect(isAgentData([])).toBe(false);
+    expect(isAgentData({ ...emptyAgentData(), policy: { skillHpThreshold: '30', finisher: true } })).toBe(false);
+    expect(isAgentData({ ...emptyAgentData(), lessons: {} })).toBe(false);
+    expect(isAgentData({ ...emptyAgentData(), sim: { duels: 1 } })).toBe(false);
+    const { testnet: _testnet, ...withoutTestnet } = emptyAgentData();
+    expect(isAgentData(withoutTestnet)).toBe(false);
+  });
+});
+
+describe('makeCoach routing and LLM counts', () => {
+  const summary: DuelSummary = {
+    duelId: '1',
+    mode: 'sim',
+    opponent: '0x0000000000000000000000000000000000000001' as Hex,
+    myElement: 0,
+    oppElement: 1,
+    result: 'loss',
+    skillUsedAtHpPct: null,
+    followedPolicy: true,
+    hpTimeline: [],
+  };
+  const ctx = { atk: 10, mult: 1, myMaxHp: 100 };
+  const policy = emptyAgentData().policy;
+  const validReply = { lesson: 'Fire it earlier.', thresholdDelta: 5, finisher: true };
+
+  const fakeLlm = (behaviour: 'ok' | 'throw') => {
+    const calls = { n: 0 };
+    const llm: Llm = {
+      async json<T>(_system: string, _user: string, schema: ZodType<T>): Promise<T> {
+        calls.n += 1;
+        if (behaviour === 'throw') throw new Error('boom');
+        return schema.parse(validReply);
+      },
+    };
+    return { llm, calls };
+  };
+
+  const runDuels = async (coach: ReturnType<typeof makeCoach>, count: number) => {
+    const outs = [];
+    for (let i = 0; i < count; i++) outs.push(await coach(summary, policy, () => 0.5, ctx, i, []));
+    return outs;
+  };
+
+  test('every K-th duel goes to the LLM, the rest to the rule coach', async () => {
+    const { llm, calls } = fakeLlm('ok');
+    const stats = newLlmStats();
+    const outs = await runDuels(makeCoach(llm, 3, stats), 7);
+    expect(calls.n).toBe(2); // duels 3 and 6 (1-based)
+    expect(stats).toEqual({ attempted: 2, succeeded: 2 });
+    expect(outs[2]!.lesson).toBe('Fire it earlier.');
+    expect(outs[0]!.lesson).not.toBe('Fire it earlier.');
+  });
+
+  test('K = 0 never uses the LLM', async () => {
+    const { llm, calls } = fakeLlm('ok');
+    const stats = newLlmStats();
+    await runDuels(makeCoach(llm, 0, stats), 10);
+    expect(calls.n).toBe(0);
+    expect(stats).toEqual({ attempted: 0, succeeded: 0 });
+  });
+
+  test('a null LLM never attempts anything', async () => {
+    const stats = newLlmStats();
+    const outs = await runDuels(makeCoach(null, 1, stats), 4);
+    expect(outs).toHaveLength(4);
+    expect(stats).toEqual({ attempted: 0, succeeded: 0 });
+  });
+
+  test('a throwing LLM counts as attempted but not succeeded and still yields a rule lesson', async () => {
+    const { llm } = fakeLlm('throw');
+    const stats = newLlmStats();
+    const outs = await runDuels(makeCoach(llm, 1, stats), 3);
+    expect(stats).toEqual({ attempted: 3, succeeded: 0 });
+    for (const out of outs) expect(out.lesson.length).toBeGreaterThan(0);
   });
 });

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { blitzArenaAbi, decodeDuels, nadCardsAbi, type Hex } from '@nad/shared';
@@ -48,6 +48,7 @@ const DEFAULT_LLM_EVERY = 10;
 const DEFAULT_BOTS = 4;
 const MS_PER_MINUTE = 60_000;
 const RECENT_LESSONS = 5;
+const EXIT_SIGNAL = 130;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -148,13 +149,24 @@ function persist(file: string, data: AgentData): void {
   renameSync(tmp, file);
 }
 
-function loadLlm(llmEvery: number, root: string): Llm | null {
-  if (llmEvery === 0) return null;
+/** Writes only when at least one duel completed, so an empty run never overwrites a good file. */
+function persistIfAny(file: string, data: AgentData): boolean {
+  if (data.sim.duels === 0) return false;
+  persist(file, data);
+  return true;
+}
+
+/** Loads the root .env (DATA_DIR, LLM_*); must run before paths and the LLM client are resolved. */
+function loadRootEnv(root: string): void {
   try {
     process.loadEnvFile(path.join(root, '.env'));
   } catch {
     // a missing .env is fine
   }
+}
+
+function chooseLlm(llmEvery: number): Llm | null {
+  if (llmEvery === 0) return null;
   const llm = llmFromEnv(process.env);
   if (llm === null) console.log('LLM not configured; rule coach for all duels');
   return llm;
@@ -162,7 +174,7 @@ function loadLlm(llmEvery: number, root: string): Llm | null {
 
 // ---------------------------------------------------------------------- coach
 
-type CoachFn = (
+export type CoachFn = (
   s: DuelSummary,
   policy: Policy,
   rng: () => number,
@@ -171,16 +183,33 @@ type CoachFn = (
   lessons: AgentData['lessons'],
 ) => Promise<CoachOutput>;
 
-/** One place that picks the coach; `stats.llmDuels` counts duels routed to the LLM coach. */
-function makeCoach(llm: Llm | null, llmEvery: number, stats: { llmDuels: number }): CoachFn {
+/** attempted = duels routed to the LLM coach; succeeded = LLM calls that returned a reply (the rest fell back to rules). */
+export type LlmStats = { attempted: number; succeeded: number };
+
+export const newLlmStats = (): LlmStats => ({ attempted: 0, succeeded: 0 });
+
+/** One place that picks the coach. llmCoach swallows LLM failures, so success is counted on the wrapped client. */
+export function makeCoach(llm: Llm | null, llmEvery: number, stats: LlmStats): CoachFn {
+  const counted: Llm | null =
+    llm === null
+      ? null
+      : {
+          json: async (...args) => {
+            const reply = await llm.json(...args);
+            stats.succeeded += 1;
+            return reply;
+          },
+        };
   return async (s, policy, rng, ctx, duelIndex, lessons) => {
-    if (llm !== null && llmEvery > 0 && (duelIndex + 1) % llmEvery === 0) {
-      stats.llmDuels += 1;
-      return llmCoach(s, policy, llm, rng, undefined, { recentLessons: lessons.slice(0, RECENT_LESSONS), ctx });
+    if (counted !== null && llmEvery > 0 && (duelIndex + 1) % llmEvery === 0) {
+      stats.attempted += 1;
+      return llmCoach(s, policy, counted, rng, undefined, { recentLessons: lessons.slice(0, RECENT_LESSONS), ctx });
     }
     return ruleCoach(s, policy, rng, ctx);
   };
 }
+
+const llmCounts = (stats: LlmStats): string => `llm ${stats.attempted} attempted / ${stats.succeeded} succeeded`;
 
 // ---------------------------------------------------------------- chain setup
 
@@ -263,11 +292,11 @@ async function playDuel(rig: Rig, data: AgentData, baseWins: number, index: numb
   return { summary, ctx: { atk: last.atk, mult: last.mult, myMaxHp: last.myMaxHp } };
 }
 
-type RunReport = { data: AgentData; completed: number; failed: number; lessonsAdded: number; aborted: boolean };
+type RunReport = { data: AgentData; completed: number; failed: number; lessonsAdded: number; aborted: boolean; written: boolean };
 
-function progressLine(done: number, total: number, data: AgentData, from: number): string {
+function progressLine(done: number, total: number, data: AgentData, from: number, stats: LlmStats): string {
   const winrate = data.sim.duels === 0 ? 0 : Math.round((data.sim.wins * PERCENT) / data.sim.duels);
-  return `duel ${done}/${total} · winrate ${winrate}% · threshold ${from}→${data.policy.skillHpThreshold} · lessons ${data.lessons.length}`;
+  return `duel ${done}/${total} · winrate ${winrate}% · threshold ${from}→${data.policy.skillHpThreshold} · lessons ${data.lessons.length} · ${llmCounts(stats)}`;
 }
 
 async function trainLoop(
@@ -275,6 +304,7 @@ async function trainLoop(
   args: TrainArgs,
   start: { data: AgentData; baseWins: number },
   coach: CoachFn,
+  stats: LlmStats,
   output: string,
   interrupted: () => boolean,
 ): Promise<RunReport> {
@@ -297,17 +327,15 @@ async function trainLoop(
       consecutiveFailures += 1;
       console.error(`duel ${i + 1}/${args.duels} failed: ${error instanceof Error ? error.message : String(error)}`);
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        persist(output, data);
-        return { data, completed: data.sim.duels, failed, lessonsAdded, aborted: true };
+        return { data, completed: data.sim.duels, failed, lessonsAdded, aborted: true, written: persistIfAny(output, data) };
       }
     }
     if ((i + 1) % SAVE_EVERY === 0) {
       persist(output, data);
-      console.log(progressLine(i + 1, args.duels, data, fromThreshold));
+      console.log(progressLine(i + 1, args.duels, data, fromThreshold, stats));
     }
   }
-  persist(output, data);
-  return { data, completed: data.sim.duels, failed, lessonsAdded, aborted: false };
+  return { data, completed: data.sim.duels, failed, lessonsAdded, aborted: false, written: persistIfAny(output, data) };
 }
 
 // ----------------------------------------------------------------------- main
@@ -315,22 +343,31 @@ async function trainLoop(
 async function run(): Promise<void> {
   const args = parseTrainArgs(process.argv.slice(2));
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+  loadRootEnv(root);
   const paths = resolvePaths(root, process.env);
   mkdirSync(paths.dataDir, { recursive: true });
 
-  const llm = loadLlm(args.llmEvery, root);
+  const llm = chooseLlm(args.llmEvery);
   const start = prepareTrainingData(readLiveData(paths.input));
   const fromThreshold = start.data.policy.skillHpThreshold;
-  const llmStats = { llmDuels: 0 };
+  const llmStats = newLlmStats();
   const coach = makeCoach(llm, args.llmEvery, llmStats);
 
   let stop = false;
-  process.once('SIGINT', () => {
+  let anvil: AnvilHandle | null = null;
+  const onSignal = (signal: string) => {
+    if (stop) {
+      console.error(`${signal} again: stopping anvil and exiting now`);
+      anvil?.stop();
+      process.exit(EXIT_SIGNAL);
+    }
     stop = true;
-    console.log('SIGINT: finishing the current duel, writing partial output');
-  });
+    console.log(`${signal}: finishing the current duel, then writing partial output`);
+  };
+  process.on('SIGINT', () => onSignal('SIGINT'));
+  process.on('SIGTERM', () => onSignal('SIGTERM'));
 
-  const anvil = await startAnvil(PORT);
+  anvil = await startAnvil(PORT);
   const started = Date.now();
   let miner: ReturnType<typeof startMiner> | null = null;
   try {
@@ -342,9 +379,10 @@ async function run(): Promise<void> {
     console.log(`setup done: agent + ${args.bots} bots on anvil ${arena}`);
 
     miner = startMiner(anvil.mine, MINE_TICK_MS, BLOCKS_PER_TICK, (e) => console.error('miner failed:', e.message));
-    const report = await trainLoop({ client, arena, agent, bots }, args, start, coach, paths.output, () => stop);
-    summarize(report, args, fromThreshold, llmStats.llmDuels, paths.output, Date.now() - started);
-    if (report.aborted) throw new Error(`aborted after ${MAX_CONSECUTIVE_FAILURES} consecutive failed duels`);
+    const rig = { client, arena, agent, bots };
+    const report = await trainLoop(rig, args, start, coach, llmStats, paths.output, () => stop);
+    if (report.written) summarize(report, args, fromThreshold, llmStats, paths.output, Date.now() - started);
+    finish(report, stop);
     const minerFailure = miner.failure();
     if (minerFailure) throw new Error(`miner failed: ${minerFailure.message}`);
   } finally {
@@ -353,16 +391,40 @@ async function run(): Promise<void> {
   }
 }
 
-function summarize(report: RunReport, args: TrainArgs, from: number, llmDuels: number, file: string, elapsedMs: number): void {
+/** Turns an aborted or empty run into an error whose message says what was (not) written. */
+function finish(report: RunReport, interrupted: boolean): void {
+  if (report.aborted) {
+    const note = report.written ? 'a partial agent.train.json was written' : 'no output was written';
+    throw new Error(`aborted after ${MAX_CONSECUTIVE_FAILURES} consecutive failed duels; ${note}`);
+  }
+  if (!report.written) {
+    throw new Error(interrupted ? 'interrupted before any duel completed; no output was written' : 'no duel completed; no output was written');
+  }
+  if (interrupted) console.log(`interrupted after ${report.completed} duels; partial output written`);
+}
+
+function summarize(report: RunReport, args: TrainArgs, from: number, stats: LlmStats, file: string, elapsedMs: number): void {
   const { data } = report;
   const perMinute = elapsedMs > 0 ? (report.completed * MS_PER_MINUTE) / elapsedMs : 0;
-  console.log(`duels/minute ${perMinute.toFixed(1)} · failed ${report.failed} · lessons added ${report.lessonsAdded} · llm-coached ${llmDuels}/${args.duels}`);
+  console.log(`duels/minute ${perMinute.toFixed(1)} · failed ${report.failed} · lessons added ${report.lessonsAdded}`);
+  console.log(`${llmCounts(stats)} of ${args.duels} duels`);
   console.log(
     `TRAIN OK duels=${data.sim.duels} wins=${data.sim.wins} threshold=${from}→${data.policy.skillHpThreshold} lessons=${data.lessons.length} file=${file}`,
   );
 }
 
-const isMain = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+/** True when this module is the entry point; realpath so symlinked paths (/tmp -> /private/tmp) still match. */
+function isEntryPoint(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+  } catch {
+    return false;
+  }
+}
+
+const isMain = isEntryPoint();
 if (isMain) {
   run().then(
     () => process.exit(0),
