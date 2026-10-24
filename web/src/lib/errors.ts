@@ -1,6 +1,7 @@
 import { FundError, MaybeLandedError } from './actions';
 import { ApiError, NetworkError, TimeoutError } from './api';
 import { InsufficientFundsError } from './flows';
+import { StakeFundsError } from './stakeFlows';
 import type { DuelStatus } from './types';
 
 export type AgentRefusalReason = 'busy' | 'reserved' | 'not_open' | 'stale' | 'limit_ip';
@@ -15,6 +16,8 @@ export type FriendlyInput =
 export type ErrorContext = { fn: string; duelStatus?: DuelStatus };
 
 const GENERIC_REVERT = "That didn't go through. Try again.";
+export const STAKING_CLOSED = 'Staking closed for this duel.';
+export const NOT_FINAL = "The result isn't final yet. Try again in a moment.";
 const RATE_LIMITED = /limit|429/i;
 
 function revertedMessage(fn: string, duelStatus?: DuelStatus): string {
@@ -25,6 +28,8 @@ function revertedMessage(fn: string, duelStatus?: DuelStatus): string {
   if (fn === 'paidPull') return "The pull didn't go through. Wait a second and try again.";
   if (fn === 'freePull') return 'You already pulled your free card.';
   if (fn === 'createDuel') return "Couldn't create the duel. Try again.";
+  if (fn === 'stake') return STAKING_CLOSED;
+  if (fn === 'claim') return NOT_FINAL;
   return GENERIC_REVERT;
 }
 
@@ -83,6 +88,7 @@ export function toFriendly(err: unknown, ctx: ErrorContext): string {
   }
   if (err instanceof FundError) return fundMessage(err);
   if (err instanceof MaybeLandedError) return friendlyError({ kind: 'uncertain', fn: err.fn });
+  if (err instanceof StakeFundsError) return 'Not enough test MON to stake.';
   if (err instanceof InsufficientFundsError) return 'Not enough test MON for another pull.';
   if (err instanceof NetworkError || err instanceof TimeoutError) return friendlyError({ kind: 'network' });
   if (err instanceof ApiError) return friendlyError({ kind: 'relay', reason: err.reason });

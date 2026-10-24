@@ -1,14 +1,12 @@
 import {
   FundError,
   MIN_FUND_WEI,
-  TX_GAP_MS,
   createDuel,
-  defaultSleep,
   ensureFunds,
   freePull,
-  msSinceLastTx,
   mustSucceed,
   paidPull,
+  waitForTxGap,
 } from './actions';
 import type { ActionDeps } from './actions';
 
@@ -43,8 +41,7 @@ export async function pullCard(deps: ActionDeps, { paid }: { paid: boolean }): P
   if (BigInt(account.balance) < minWei) throw new InsufficientFundsError();
 
   // Reserve balance: a value tx must be the first tx in 3 blocks.
-  const gap = Math.max(0, TX_GAP_MS - msSinceLastTx(deps.now));
-  if (paid && gap > 0) await (deps.sleep ?? defaultSleep)(gap);
+  if (paid) await waitForTxGap(deps);
 
   const fn = paid ? 'paidPull' : 'freePull';
   const result = mustSucceed(await (paid ? paidPull(deps, price) : freePull(deps)), fn);

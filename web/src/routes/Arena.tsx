@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { nextPeak, pickFeatured, swarmDuels } from '../lib/arenaView';
+import { sameAddress } from '../lib/duelView';
+import { stakeEnabled } from '../lib/stakeView';
 import { useArenaSocket } from '../lib/useArenaSocket';
 import { useConfig } from '../lib/useConfig';
+import { useStake } from '../lib/useStake';
 import { AgentPanel } from './arena/AgentPanel';
 import { AudienceQr } from './arena/AudienceQr';
 import { FeaturedDuel } from './arena/FeaturedDuel';
@@ -22,6 +25,20 @@ export function Arena() {
     if (socket.stats) setPeak((prev) => nextPeak(prev, socket.stats?.txPerSec ?? 0));
   }, [socket.stats]);
 
+  const featured = config ? pickFeatured(duels, socket.featuredId, config.bots) : null;
+  // The featured duel's stake is read when it changes and when it ends or settles; AI Agent duels carry none.
+  const featuredStakes =
+    config !== null &&
+    featured !== null &&
+    stakeEnabled(config) &&
+    !sameAddress(featured.p1, config.agent) &&
+    !sameAddress(featured.p2, config.agent);
+  const { stake } = useStake(
+    featured?.id ?? null,
+    featuredStakes,
+    `${featured?.status}:${featured?.settled}:${featured !== null && socket.block >= featured.startBlock}`,
+  );
+
   if (!config) {
     return (
       <main className="min-h-[100dvh] bg-surface p-8 text-ink">
@@ -30,7 +47,6 @@ export function Arena() {
     );
   }
 
-  const featured = pickFeatured(duels, socket.featuredId, config.bots);
   const swarm = swarmDuels(duels, featured?.id ?? null, socket.block);
 
   return (
@@ -38,7 +54,7 @@ export function Arena() {
       <Header config={config} stats={socket.stats} block={socket.block} connected={socket.connected} />
       <div className="grid grid-cols-3 gap-8">
         <div className="col-span-2">
-          <FeaturedDuel duel={featured} config={config} block={socket.block} />
+          <FeaturedDuel duel={featured} config={config} block={socket.block} stake={stake} />
         </div>
         <div className="flex flex-col gap-8">
           <AgentPanel agent={socket.agent} />

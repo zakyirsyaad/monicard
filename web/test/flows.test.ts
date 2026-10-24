@@ -42,6 +42,7 @@ function deps(over: Partial<Api> = {}) {
     relay: vi.fn(() => Promise.resolve(result({ events: { tokenId: '12', duelId: '34' } }))),
     getCard: vi.fn(() => Promise.resolve(null)),
     challengeAgent: vi.fn(() => Promise.resolve({ ok: true as const })),
+    getStake: vi.fn(() => Promise.resolve(null)),
     ...over,
   };
   return { api, account, config, sleep: vi.fn(() => Promise.resolve()) };

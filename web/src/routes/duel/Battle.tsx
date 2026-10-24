@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { HpBar } from '../../components/HpBar';
 import { LatencyBadge } from '../../components/LatencyBadge';
 import { Notice } from '../../components/Notice';
@@ -26,6 +27,8 @@ export interface BattleProps {
   duelEngine: DuelEngine;
   opponentName: string;
   taunt: string | null;
+  /** Stake status line (pot / unmatched stake) shown under the status row. */
+  stakeLine?: ReactNode;
 }
 
 /** Rising "+dmg" numbers above the opponent bar; each removes itself when its animation ends. */
@@ -96,7 +99,7 @@ function OpponentPanel({ name, hp, maxHp, pendingDamage, floaters, onFloaterDone
   );
 }
 
-export function Battle({ duel, block, side, countdown, duelEngine, opponentName, taunt }: BattleProps) {
+export function Battle({ duel, block, side, countdown, duelEngine, opponentName, taunt, stakeLine = null }: BattleProps) {
   const [floaters, addFloater, removeFloater] = useFloaters();
   const [shaking, shake] = useShake();
   const me = sideStats(duel, side);
@@ -126,6 +129,7 @@ export function Battle({ duel, block, side, countdown, duelEngine, opponentName,
           <LatencyBadge block={block} latencyMs={latencyMs} txHash={stats?.lastTxHash ?? null} />
           <span className="data text-ink-muted">{seconds}s</span>
         </div>
+        {stakeLine}
         <OpponentPanel
           name={opponentName}
           hp={opp.hp}

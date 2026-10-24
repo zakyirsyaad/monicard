@@ -10,8 +10,11 @@ import { friendlyError, toFriendly } from '../../lib/errors';
 import { startDuel } from '../../lib/flows';
 import { explorerTx, formatInt, formatMs, formatRecord } from '../../lib/format';
 import { actionDeps } from '../../lib/player';
+import { hasStake } from '../../lib/stakeView';
 import type { TxStats } from '../../lib/txEngine';
-import type { AgentMsg, Config, DuelView } from '../../lib/types';
+import type { AgentMsg, Config, DuelView, StakeView } from '../../lib/types';
+import type { StakeCtx } from '../../lib/useStake';
+import { StakeResult } from './StakeResult';
 import { useCard } from './useCard';
 
 const HEADLINE_COLOR: Record<Outcome, string> = {
@@ -27,6 +30,8 @@ export interface ResultProps {
   vsAgent: boolean;
   agent: AgentMsg | null;
   stats: TxStats | null;
+  /** Set only when staking is enabled and this is not an AI Agent duel. */
+  stakeCtx?: StakeCtx | null;
 }
 
 function Summary({ duel, side, stats }: { duel: DuelView; side: Side; stats: TxStats | null }) {
@@ -74,13 +79,17 @@ function Lesson({ agent, duelId }: { agent: AgentMsg | null; duelId: string }) {
   );
 }
 
-export function Result({ duel, side, config, vsAgent, agent, stats }: ResultProps) {
+export function Result({ duel, side, config, vsAgent, agent, stats, stakeCtx = null }: ResultProps) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A rematch duel whose agent challenge was refused: retries reuse it.
   const rematchId = useRef<string | null>(null);
+  const [claimTx, setClaimTx] = useState<string | null>(null);
   const result = outcome(duel, side);
+  const stake: StakeView | null = stakeCtx?.stake ?? null;
+  const showStake = stakeCtx !== null && (hasStake(stake) || claimTx !== null);
+  const claimPending = showStake && !(stake?.claimed || claimTx !== null);
 
   const rematch = async () => {
     if (!config || busy) return;
@@ -91,7 +100,7 @@ export function Result({ duel, side, config, vsAgent, agent, stats }: ResultProp
       const id = rematchId.current;
       if (!vsAgent) return navigate(`/duel/${id}`);
       const res = await api.challengeAgent(id);
-      if (res.ok) return navigate(`/duel/${id}`);
+      if (res.ok) return navigate(`/duel/${id}`, { state: { vsAgent: true } });
       if (res.reason === 'not_open' || res.reason === 'stale') rematchId.current = null;
       setError(friendlyError({ kind: 'agent', reason: res.reason }));
     } catch (err) {
@@ -108,9 +117,12 @@ export function Result({ duel, side, config, vsAgent, agent, stats }: ResultProp
       <Summary duel={duel} side={side} stats={stats} />
       <Record duel={duel} side={side} />
       {vsAgent && duel.settled && <Lesson agent={agent} duelId={duel.id} />}
+      {showStake && stakeCtx && stake && (
+        <StakeResult duel={duel} side={side} ctx={stakeCtx} stake={stake} claimTx={claimTx} onClaimed={setClaimTx} />
+      )}
       <div className="mt-auto flex flex-col gap-3">
         {error && <Notice>{error}</Notice>}
-        <Button busy={busy} busyLabel="Creating duel…" disabled={!config} onClick={() => void rematch()}>
+        <Button variant={claimPending ? 'secondary' : 'primary'} busy={busy} busyLabel="Creating duel…" disabled={!config} onClick={() => void rematch()}>
           Rematch
         </Button>
         <Button variant="secondary" onClick={() => navigate('/play')}>

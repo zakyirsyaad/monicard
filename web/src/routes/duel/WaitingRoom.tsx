@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '../../components/Button';
 import { Screen } from '../../components/Screen';
+import type { StakeCtx } from '../../lib/useStake';
 import { CardSlot } from './CardSlot';
+import { StakePanel } from './StakePanel';
 
 const COPIED_MS = 1500;
 const QR_SIZE = 240;
@@ -12,9 +14,11 @@ type CopyState = 'idle' | 'copied' | 'failed';
 export interface WaitingRoomProps {
   duelId: string;
   myCardId: string;
+  /** Set only when staking is enabled and this is a friend duel. */
+  stakeCtx?: StakeCtx | null;
 }
 
-export function WaitingRoom({ duelId, myCardId }: WaitingRoomProps) {
+export function WaitingRoom({ duelId, myCardId, stakeCtx = null }: WaitingRoomProps) {
   const link = `${location.origin}/duel/${duelId}`;
   const [copy, setCopy] = useState<CopyState>('idle');
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -52,6 +56,7 @@ export function WaitingRoom({ duelId, myCardId }: WaitingRoomProps) {
       <Button variant="secondary" onClick={copyLink}>
         {label}
       </Button>
+      {stakeCtx && <StakePanel duelId={duelId} ctx={stakeCtx} />}
       <div className="mt-auto">
         <CardSlot id={myCardId} />
       </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { lostJoinRace, mySide, opponentOf, phase, sameAddress } from '../lib/duelView';
 import type { Side } from '../lib/duelView';
@@ -7,14 +7,19 @@ import { friendlyError, toFriendly } from '../lib/errors';
 import { shortHex } from '../lib/format';
 import { burnerAccount } from '../lib/player';
 import { RETURN_TO_KEY } from '../lib/returnTo';
+import { stakeEnabled } from '../lib/stakeView';
 import type { AgentMsg, Config, DuelView } from '../lib/types';
 import { useArenaSocket } from '../lib/useArenaSocket';
 import { useConfig } from '../lib/useConfig';
+import { useStake } from '../lib/useStake';
+import type { StakeCtx } from '../lib/useStake';
 import { Battle } from './duel/Battle';
 import { JoinConfirm } from './duel/JoinConfirm';
 import { Message } from './duel/Message';
 import { Result } from './duel/Result';
 import { Spectator } from './duel/Spectator';
+import { NO_STAKE_JOIN, StakeLine } from './duel/StakeLine';
+import type { StakeJoin } from './duel/StakeLine';
 import { WaitingRoom } from './duel/WaitingRoom';
 import { useDuelEngine } from './duel/useDuelEngine';
 import type { DuelEngine } from './duel/useDuelEngine';
@@ -92,13 +97,25 @@ type ParticipantProps = {
   agent: AgentMsg | null;
   taunt: string | null;
   duelEngine: DuelEngine;
+  stakeCtx: StakeCtx | null;
+  stakeJoin: StakeJoin;
 };
 
 /** Countdown, battle and result for a player of this duel; the engine lives above so it survives the switch. */
-function Participant({ duel, side, view, block, config, agent, taunt, duelEngine }: ParticipantProps) {
+function Participant({ duel, side, view, block, config, agent, taunt, duelEngine, stakeCtx, stakeJoin }: ParticipantProps) {
   const vsAgent = config !== null && sameAddress(opponentOf(duel, side), config.agent);
   if (view === 'ended') {
-    return <Result duel={duel} side={side} config={config} vsAgent={vsAgent} agent={agent} stats={duelEngine.stats} />;
+    return (
+      <Result
+        duel={duel}
+        side={side}
+        config={config}
+        vsAgent={vsAgent}
+        agent={agent}
+        stats={duelEngine.stats}
+        stakeCtx={stakeCtx}
+      />
+    );
   }
   return (
     <Battle
@@ -109,6 +126,7 @@ function Participant({ duel, side, view, block, config, agent, taunt, duelEngine
       duelEngine={duelEngine}
       opponentName={opponentName(duel, side, vsAgent, agent)}
       taunt={taunt}
+      stakeLine={stakeCtx && <StakeLine stake={stakeCtx.stake} join={stakeJoin} />}
     />
   );
 }
@@ -124,6 +142,17 @@ function Duel({ id }: { id: string }) {
   const view = phase(duel, socket.block, address);
   const duelEngine = useDuelEngine({ duelId: id, duel, block: socket.block, side, config });
   useWakeLock(view === 'countdown' || view === 'battle');
+
+  // Stake UI (N15): behind the /config flag, never against the AI Agent (also not while the agent is still joining).
+  const location = useLocation();
+  const agentFlow = (location.state as { vsAgent?: boolean } | null)?.vsAgent === true;
+  const againstAgent =
+    agentFlow ||
+    (duel !== null && config !== null && (sameAddress(duel.p1, config.agent) || sameAddress(duel.p2, config.agent)));
+  const stakeOn = stakeEnabled(config) && !againstAgent && (side !== null || view === 'join');
+  const { stake, refresh } = useStake(id, stakeOn, `${view}:${duel?.status}:${duel?.settled}`);
+  const stakeCtx: StakeCtx | null = stakeOn && config ? { config, stake, refresh } : null;
+  const [stakeJoin, setStakeJoin] = useState<StakeJoin>(NO_STAKE_JOIN);
 
   // Remember the join screen: if the duel then leaves Open without us, we lost the race to join.
   const [sawJoinView, setSawJoinView] = useState(false);
@@ -146,12 +175,24 @@ function Duel({ id }: { id: string }) {
         agent={socket.agent}
         taunt={socket.taunts.get(id) ?? null}
         duelEngine={duelEngine}
+        stakeCtx={stakeCtx}
+        stakeJoin={stakeJoin}
       />
     );
   }
-  if (view === 'waiting') return <WaitingRoom duelId={id} myCardId={String(duel.card1)} />;
+  if (view === 'waiting') {
+    return <WaitingRoom duelId={id} myCardId={String(duel.card1)} stakeCtx={stakeCtx} />;
+  }
   if (view === 'join') {
-    return <JoinConfirm duel={duel} myCardId={player.cardId} config={config} />;
+    return (
+      <JoinConfirm
+        duel={duel}
+        myCardId={player.cardId}
+        config={config}
+        stakeCtx={stakeCtx}
+        onStakeJoin={setStakeJoin}
+      />
+    );
   }
   if (lostJoinRace(view, sawJoinView)) return <Message text={JOIN_RACE_LOST} back />;
   return <Spectator />;

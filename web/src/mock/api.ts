@@ -12,6 +12,7 @@ export function createMockApi(chain: () => MockChain): Api {
     relay: (rawTx: Hex) => chain().relay(rawTx),
     getCard: (id: string) => Promise.resolve(chain().getCard(id)),
     challengeAgent: (duelId: string) => Promise.resolve(chain().challengeAgent(duelId)),
+    getStake: (duelId: string) => Promise.resolve(chain().getStake(duelId)),
   };
 }
 

@@ -84,6 +84,12 @@ export function msSinceLastTx(now: () => number = Date.now): number {
   }
 }
 
+/** Reserve balance: waits until the burner's last tx is 3 blocks old (a value tx must be the first in 3 blocks). */
+export async function waitForTxGap({ now, sleep = defaultSleep }: Pick<ActionDeps, 'now' | 'sleep'>): Promise<void> {
+  const gap = Math.max(0, TX_GAP_MS - msSinceLastTx(now));
+  if (gap > 0) await sleep(gap);
+}
+
 /** Tops the burner up when its balance is under `minWei`. Returns the fresh account. */
 export async function ensureFunds(
   { api, sleep = defaultSleep }: FundDeps,
@@ -133,9 +139,11 @@ async function relayWithResends(deps: ActionDeps, raw: Hex): Promise<Relayed> {
   }
 }
 
+const UNSAFE_FNS: ReadonlySet<string> = new Set(['createDuel', 'joinDuel', 'stake', 'claim']);
+
 /** Calls the player must not blindly repeat: a value tx would pay twice, a duel call would duplicate a duel. */
 const isUnsafeToRepeat = (call: CallParams): boolean =>
-  (call.value ?? 0n) > 0n || call.fn === 'createDuel' || call.fn === 'joinDuel';
+  (call.value ?? 0n) > 0n || UNSAFE_FNS.has(call.fn);
 
 /**
  * Signs a call with the burner and relays it. A nonce error re-signs once, but only if no send of this call

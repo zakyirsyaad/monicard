@@ -8,7 +8,10 @@ import type {
   Config,
   FundResult,
   RelayResult,
+  StakeView,
 } from './types';
+import { createStakeReader } from './stakeRead';
+import type { StakeReader } from './stakeRead';
 
 export type { Api } from './types';
 
@@ -83,6 +86,7 @@ function reasonOf(raw: Raw): string {
 export function createHttpApi(
   baseUrl = '',
   fetchFn: typeof fetch = (...args) => fetch(...args),
+  readStake: StakeReader = createStakeReader(),
 ): Api {
   async function send(
     path: string,
@@ -123,6 +127,19 @@ export function createHttpApi(
     body: JSON.stringify(body),
   });
 
+  // The vault address comes from /config, remembered once it is known (a failed request is simply retried).
+  let vault: Promise<Hex | null> | null = null;
+  const vaultAddress = (): Promise<Hex | null> => {
+    vault ??= call<Config>('/config').then(
+      (config) => config.contracts.stakeVault ?? null,
+      (err: unknown) => {
+        vault = null;
+        throw err;
+      },
+    );
+    return vault;
+  };
+
   return {
     getConfig: () => call<Config>('/config'),
     getAccount: (address: Hex) => call<Account>(`/account/${address}`),
@@ -135,6 +152,10 @@ export function createHttpApi(
       if (!raw.ok) throw new ApiError(raw.status, reasonOf(raw));
       if (raw.body === null) throw new ApiError(raw.status, 'bad_response');
       return raw.body as CardMeta;
+    },
+    async getStake(duelId: string): Promise<StakeView | null> {
+      const address = await vaultAddress();
+      return address === null ? null : readStake(address, duelId);
     },
     async challengeAgent(duelId: string): Promise<AgentChallengeResult> {
       const raw = await send('/agent/challenge', postJson({ duelId }));

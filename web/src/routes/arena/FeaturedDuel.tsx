@@ -1,12 +1,15 @@
 import { HpBar } from '../../components/HpBar';
 import { duelStatusText, sideLabel } from '../../lib/arenaView';
-import type { Config, DuelView } from '../../lib/types';
+import { formatMon, potWei } from '../../lib/stakeView';
+import type { Config, DuelView, StakeView } from '../../lib/types';
 import { CardSlot } from '../duel/CardSlot';
 
 export interface FeaturedDuelProps {
   duel: DuelView | null;
   config: Config;
   block: number;
+  /** Stake of the featured duel; null when staking is off or unread. */
+  stake?: StakeView | null;
 }
 
 const PANEL = 'rounded-card border border-line bg-surface-raised p-6';
@@ -17,7 +20,7 @@ function statusColor(status: DuelView['status']): string {
   return 'text-ink';
 }
 
-export function FeaturedDuel({ duel, config, block }: FeaturedDuelProps) {
+export function FeaturedDuel({ duel, config, block, stake = null }: FeaturedDuelProps) {
   if (!duel) {
     return (
       <section className={`${PANEL} flex min-h-[320px] items-center justify-center`}>
@@ -27,6 +30,7 @@ export function FeaturedDuel({ duel, config, block }: FeaturedDuelProps) {
   }
 
   const open = duel.status === 'Open';
+  const pot = potWei(stake);
   const labels = {
     p1: sideLabel(duel.p1, config.agent),
     p2: open ? 'Waiting…' : sideLabel(duel.p2, config.agent),
@@ -49,6 +53,7 @@ export function FeaturedDuel({ duel, config, block }: FeaturedDuelProps) {
         </div>
       </div>
       <p className={`display text-center ${statusColor(duel.status)}`}>{duelStatusText(duel, block, labels)}</p>
+      {pot > 0n && <p className="data-lg text-center text-ink">Pot {formatMon(pot)} MON</p>}
     </section>
   );
 }

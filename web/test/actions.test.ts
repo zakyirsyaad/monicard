@@ -60,6 +60,7 @@ function makeApi(overrides: Partial<Api> = {}): Api {
     relay: vi.fn(() => Promise.resolve(success())),
     getCard: vi.fn(() => Promise.resolve(null)),
     challengeAgent: vi.fn(() => Promise.resolve({ ok: true as const })),
+    getStake: vi.fn(() => Promise.resolve(null)),
     ...overrides,
   };
 }
@@ -172,6 +173,8 @@ describe('sendCall', () => {
     ['paidPull', { value: 50_000_000_000_000_000n }],
     ['createDuel', {}],
     ['joinDuel', {}],
+    ['stake', { value: 50_000_000_000_000_000n }],
+    ['claim', {}],
   ])('throws MaybeLandedError when every resend of %s times out', async (fn, extra) => {
     const relay = vi.fn<Api['relay']>().mockRejectedValue(new TimeoutError(5000));
     const err = await sendCall(deps(makeApi({ relay })), { ...call, fn, ...extra }).catch((e: unknown) => e);

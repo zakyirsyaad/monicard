@@ -6,7 +6,7 @@ import {
   stringToHex,
 } from 'viem';
 import type { Hex, TransactionSerialized } from 'viem';
-import { blitzArenaAbi, nadCardsAbi } from '../lib/abi';
+import { blitzArenaAbi, nadCardsAbi, stakeVaultAbi } from '../lib/abi';
 import { ApiError } from '../lib/api';
 import {
   COUNTDOWN_BLOCKS,
@@ -28,6 +28,7 @@ import type {
   DuelsMsg,
   FundResult,
   RelayResult,
+  StakeView,
   StatsMsg,
 } from '../lib/types';
 import { AGENT_LESSON_TEXT, cardText } from './lore';
@@ -56,6 +57,12 @@ const BOT_INTERVAL_BLOCKS = 3;
 const SNAPSHOT_DUELS = 64;
 const MAX_LESSONS = 20;
 
+const MIN_STAKE = 1_000_000_000_000_000n; // 0.001 MON
+const MAX_STAKE = 1_000_000_000_000_000_000n; // 1 MON
+const RAKE_BPS = 500n;
+const BPS = 10_000n;
+const OPEN_REFUND_BLOCKS = 1200;
+
 const AGENT_START_THRESHOLD = 30;
 const AGENT_THRESHOLD_STEP = 10;
 const AGENT_THRESHOLD_MIN = 20;
@@ -74,6 +81,7 @@ const CONFIG: Config = {
   contracts: {
     cards: '0x00000000000000000000000000000000000000c1',
     arena: '0x00000000000000000000000000000000000000a1',
+    stakeVault: '0x00000000000000000000000000000000000000d1',
   },
   gasLimits: {
     freePull: 400000,
@@ -82,6 +90,8 @@ const CONFIG: Config = {
     joinDuel: 300000,
     attack: 120000,
     settle: 200000,
+    stake: 131000,
+    claim: 154000,
   },
   gasPrice: '100000000000',
   batchMs: 1000,
@@ -128,6 +138,8 @@ type CardRecord = {
 };
 
 type Wallet = { nonce: number; balance: bigint; fundCount: number };
+
+type StakeRecord = StakeView & { openedBlock: number };
 
 type DuelRuntime = {
   view: DuelView;
@@ -199,6 +211,9 @@ export type MockChain = {
   joinDuel(sender: Hex, id: Id, cardId: Id): Outcome;
   attack(sender: Hex, id: Id, taps: number, useSkill: boolean): Outcome;
   settle(sender: Hex, id: Id): Outcome;
+  /** StakeVault: `stake` needs the exact `value`; `claim` is a no-op once paid. */
+  stake(sender: Hex, id: Id, value: bigint): Outcome;
+  claim(sender: Hex, id: Id): Outcome;
 
   /** Contract views. */
   cardOf(address: Hex): number;
@@ -212,6 +227,8 @@ export type MockChain = {
   relay(rawTx: Hex): Promise<RelayResult>;
   getCard(id: string): CardMeta | null;
   challengeAgent(duelId: string): AgentChallengeResult;
+  /** `StakeVault.stakes(duelId)`; an all-zero view when nobody staked. */
+  getStake(duelId: string): StakeView;
 
   /** WebSocket payloads. `scope` is `all` or `duel:<id>`. */
   duelsMsg(scope: string): DuelsMsg;
@@ -223,6 +240,7 @@ const keyOf = (a: Hex): string => a.toLowerCase();
 const sameAddress = (a: Hex, b: Hex): boolean => keyOf(a) === keyOf(b);
 const isFinished = (d: DuelView): boolean =>
   d.status === 'P1Won' || d.status === 'P2Won' || d.status === 'Draw';
+const emptyStake = (): StakeRecord => ({ amount: 0n, p1Staked: false, p2Staked: false, claimed: false, openedBlock: 0 });
 const reverted = (): Outcome => ({ status: 'reverted', events: {} });
 const ok = (events: Outcome['events'] = {}): Outcome => ({ status: 'success', events });
 
@@ -252,6 +270,7 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
   const cards = new Map<number, CardRecord>();
   const cardOfMap = new Map<string, number>();
   const duelList: DuelRuntime[] = [];
+  const stakes = new Map<string, StakeRecord>();
   const relayed = new Map<Hex, Promise<RelayResult>>();
   const blockSubs = new Set<(block: number) => void>();
   const agentSubs = new Set<() => void>();
@@ -360,6 +379,8 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
       if (joinDuel(friendAddress, duelId, card.id).status === 'success') {
         rt.controller = 'friend';
         countTx();
+        const placed = stakes.get(duelId);
+        if (placed?.p1Staked) stake(friendAddress, duelId, placed.amount); // the friend matches the stake
       }
     }, FRIEND_WAIT_MS);
   }
@@ -468,6 +489,63 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
   /** The mock poller settles automatically; a manual settle is a no-op on known duels. */
   function settleCall(_sender: Hex, id: Id): Outcome {
     return runtime(id) ? ok() : reverted();
+  }
+
+  // ---- contract: StakeVault ----
+
+  const stakeOf = (id: Id): StakeView => {
+    const s = stakes.get(String(id));
+    return s ? { amount: s.amount, p1Staked: s.p1Staked, p2Staked: s.p2Staked, claimed: s.claimed } : emptyStake();
+  };
+
+  function stake(sender: Hex, id: Id, value: bigint): Outcome {
+    const rt = runtime(id);
+    if (!rt) return reverted();
+    const d = rt.view;
+    const isP1 = sameAddress(sender, d.p1);
+    if (!isP1 && !sameAddress(sender, d.p2)) return reverted();
+    const counting = d.status === 'Active' && block < d.startBlock;
+    const s = stakes.get(d.id) ?? { ...emptyStake(), openedBlock: block };
+    if (s.claimed || !(d.status === 'Open' || counting)) return reverted();
+    if (isP1 ? s.p1Staked : s.p2Staked) return reverted();
+    if (value < MIN_STAKE || value > MAX_STAKE) return reverted();
+    if ((s.p1Staked || s.p2Staked) && value !== s.amount) return reverted();
+    const wallet = walletOf(sender);
+    const bot = botKeys.has(keyOf(sender));
+    if (!bot && wallet.balance < value) return reverted();
+    if (!bot) wallet.balance -= value;
+
+    const next: StakeRecord = s.p1Staked || s.p2Staked ? s : { ...s, amount: value, openedBlock: block };
+    stakes.set(d.id, { ...next, p1Staked: next.p1Staked || isP1, p2Staked: next.p2Staked || !isP1 });
+    return ok();
+  }
+
+  function pay(to: Hex, wei: bigint): void {
+    walletOf(to).balance += wei;
+  }
+
+  function claim(_sender: Hex, id: Id): Outcome {
+    const rt = runtime(id);
+    if (!rt) return reverted();
+    const d = rt.view;
+    const s = stakes.get(d.id);
+    if (!s || s.claimed || (!s.p1Staked && !s.p2Staked)) return ok();
+    if (d.settled) {
+      const decisive = d.status === 'P1Won' || d.status === 'P2Won';
+      if (s.p1Staked && s.p2Staked && decisive) {
+        const pot = 2n * s.amount;
+        pay(d.status === 'P1Won' ? d.p1 : d.p2, pot - (pot * RAKE_BPS) / BPS);
+      } else {
+        if (s.p1Staked) pay(d.p1, s.amount);
+        if (s.p2Staked) pay(d.p2, s.amount);
+      }
+    } else if (d.status === 'Open' && block >= s.openedBlock + OPEN_REFUND_BLOCKS) {
+      pay(d.p1, s.amount);
+    } else {
+      return reverted();
+    }
+    stakes.set(d.id, { ...s, claimed: true });
+    return ok();
   }
 
   // ---- settlement and the AI Agent's learning ----
@@ -665,7 +743,14 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
     if (tx.chainId !== CHAIN_ID) throw new ApiError(400, 'chain');
 
     const to = tx.to ? keyOf(tx.to) : '';
-    const abi = to === keyOf(CONFIG.contracts.cards) ? nadCardsAbi : to === keyOf(CONFIG.contracts.arena) ? blitzArenaAbi : null;
+    const abi =
+      to === keyOf(CONFIG.contracts.cards)
+        ? nadCardsAbi
+        : to === keyOf(CONFIG.contracts.arena)
+          ? blitzArenaAbi
+          : to === keyOf(CONFIG.contracts.stakeVault as Hex)
+            ? stakeVaultAbi
+            : null;
     if (!abi) throw new ApiError(400, 'to');
 
     let decoded: { functionName: string; args?: readonly unknown[] };
@@ -675,7 +760,7 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
       throw new ApiError(400, 'selector');
     }
     const value = tx.value ?? 0n;
-    if (value !== 0n && decoded.functionName !== 'paidPull') throw new ApiError(400, 'value');
+    if (value !== 0n && decoded.functionName !== 'paidPull' && decoded.functionName !== 'stake') throw new ApiError(400, 'value');
 
     const wallet = walletOf(sender);
     const nonce = tx.nonce ?? 0;
@@ -691,6 +776,8 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
       joinDuel: () => joinDuel(sender, args[0] as bigint, args[1] as bigint),
       attack: () => attack(sender, args[0] as bigint, Number(args[1]), Boolean(args[2])),
       settle: () => settleCall(sender, args[0] as bigint),
+      stake: () => stake(sender, args[0] as bigint, value),
+      claim: () => claim(sender, args[0] as bigint),
     };
     const run = runners[decoded.functionName];
     if (!run) throw new ApiError(400, 'selector');
@@ -883,6 +970,8 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
     joinDuel,
     attack,
     settle: settleCall,
+    stake,
+    claim,
     cardOf: (address) => cardOfMap.get(keyOf(address)) ?? 0,
     card: (id) => {
       const c = cards.get(Number(id));
@@ -898,6 +987,7 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
     relay,
     getCard,
     challengeAgent,
+    getStake: (duelId) => stakeOf(duelId),
     duelsMsg,
     statsMsg,
     agentMsg,

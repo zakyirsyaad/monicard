@@ -2,11 +2,12 @@ import type { Hex } from 'viem';
 import type { DuelStatus, DuelView } from '@nad/shared';
 
 // Frozen interface contract (HTTP API + WebSocket). Do not add fields.
-// Approved addition: optional `StatsMsg.lastTxHash` (the server may never send it).
+// Approved additions: optional `StatsMsg.lastTxHash` (the server may never send it); optional StakeVault config (N15).
 
 export type Config = {
   chainId: 10143;
-  contracts: { cards: Hex; arena: Hex };
+  /** `stakeVault` is optional (N15): the stake UI renders only when it and both stake gas limits are present. */
+  contracts: { cards: Hex; arena: Hex; stakeVault?: Hex };
   gasLimits: {
     freePull: number;
     paidPull: number;
@@ -14,6 +15,8 @@ export type Config = {
     joinDuel: number;
     attack: number;
     settle: number;
+    stake?: number;
+    claim?: number;
   };
   /** wei */
   gasPrice: string;
@@ -24,6 +27,9 @@ export type Config = {
   agent: Hex;
   bots: Hex[];
 };
+
+/** `StakeVault.stakes(duelId)`. `amount` is 0 while nobody has staked. wei. */
+export type StakeView = { amount: bigint; p1Staked: boolean; p2Staked: boolean; claimed: boolean };
 
 export type FundReason = 'disabled' | 'limit_address' | 'limit_ip' | 'budget' | 'balance_ok';
 
@@ -142,4 +148,6 @@ export interface Api {
   /** `null` when the token does not exist (404). */
   getCard(id: string): Promise<CardMeta | null>;
   challengeAgent(duelId: string): Promise<AgentChallengeResult>;
+  /** Stake state of a duel; `null` when the stake UI is disabled. Throws on transient errors (retry later). */
+  getStake(duelId: string): Promise<StakeView | null>;
 }

@@ -78,7 +78,7 @@ export function Play() {
       const id = await duelId(config, cardId);
       const res = await api.challengeAgent(id);
       if (res.ok) {
-        navigate(`/duel/${id}`);
+        navigate(`/duel/${id}`, { state: { vsAgent: true } });
         return;
       }
       if (res.reason === 'not_open' || res.reason === 'stale') openDuel.current = null;
