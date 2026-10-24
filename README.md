@@ -11,6 +11,7 @@ Built in one day at **Monad Blitz Jogja Vol. 2** (24 October 2026) by a solo bui
 - **Repo:** https://github.com/zakyirsyaad/monicard
 - **Demo video:** https://youtu.be/N-FRL6CPAis
 - **Launch post on X:** https://x.com/0xKayz_/status/2113913855734862058
+- **LinkedIn post:** https://lnkd.in/p/gB2QTGnT
 - **Live app on Monad Mainnet:** https://monicard.xyz (open on your phone; projector view at https://monicard.xyz/arena)
 - **Live app on Monad Testnet:** https://nadgacha.43-134-58-217.sslip.io (same app, testnet contracts)
 - **Networks:** Monad Mainnet (chain id 143) and Monad Testnet (chain id 10143), one game server per network
@@ -156,6 +157,7 @@ Unit cost: one Card Battle action costs about 101,000 gas, roughly 0.01 MON at 1
 
 - **Demo video:** https://youtu.be/N-FRL6CPAis
 - **Launch post on X:** https://x.com/0xKayz_/status/2113913855734862058
+- **LinkedIn post:** https://lnkd.in/p/gB2QTGnT
 - **Showreel / ad video:** `marketing/showreel/monicard-battle-ad-1920x1080-60fps.mp4` (landscape) and `monicard-battle-ad-1080x1920-60fps.mp4` (vertical), rendered from `marketing/showreel/battle.html`.
 - **Pitch script:** `marketing/pitch.md`.
 - **Specs:** `docs/BATTLE-SPEC.md` (Card Battle rules and contract), `docs/design-system/` (brand book, tokens, Nadmon art).
