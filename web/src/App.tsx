@@ -1,5 +1,7 @@
 import { Route, Routes } from 'react-router-dom';
 import { Arena } from './routes/Arena';
+import { BattleRoute } from './routes/battle/Board';
+import { BattleLobby } from './routes/battle/Lobby';
 import { Dev } from './routes/Dev';
 import { DuelRoute } from './routes/Duel';
 import { Home } from './routes/Home';
@@ -20,6 +22,8 @@ export function App() {
       <Route path="/" element={<Home />} />
       <Route path="/pull" element={<Pull />} />
       <Route path="/play" element={<Play />} />
+      <Route path="/battle" element={<BattleLobby />} />
+      <Route path="/battle/:id" element={<BattleRoute />} />
       <Route path="/duel/:id" element={<DuelRoute />} />
       <Route path="/arena" element={<Arena />} />
       <Route path="/dev" element={<Dev />} />

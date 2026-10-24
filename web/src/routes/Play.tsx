@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { CardImage } from '../components/CardImage';
 import { Notice } from '../components/Notice';
@@ -129,7 +129,30 @@ export function Play() {
       {reveal && reveal.status !== 'ready' && <p className="body text-center text-ink-muted">Forging lore…</p>}
       <div className="mt-auto flex flex-col gap-3">
         {error && <Notice>{error}</Notice>}
-        <Button busy={busy === 'agent'} busyLabel={CREATING} disabled={!ready || busy !== null} onClick={() => void fightAgent()}>
+        <Link
+          to="/battle"
+          aria-label="Card Battle, best of 3"
+          className="flex h-14 items-center justify-between rounded-card bg-purple px-4 text-on-purple [touch-action:manipulation]"
+        >
+          <span className="flex flex-col">
+            <span className="title leading-tight">Card Battle · Best of 3</span>
+            <span className="data leading-tight opacity-80">10 onchain draws · no deck needed</span>
+          </span>
+          <span className="data" aria-hidden="true">
+            →
+          </span>
+        </Link>
+        <div className="flex items-center gap-3 pt-1">
+          <span className="label text-ink-muted">Tap Blitz</span>
+          <span className="h-px flex-1 bg-line" aria-hidden="true" />
+        </div>
+        <Button
+          variant="secondary"
+          busy={busy === 'agent'}
+          busyLabel={CREATING}
+          disabled={!ready || busy !== null}
+          onClick={() => void fightAgent()}
+        >
           Fight AI Agent
         </Button>
         <Button
