@@ -13,7 +13,9 @@ import { actionDeps, burnerAccount } from '../lib/player';
 import { takeReturnTo } from '../lib/returnTo';
 import { useArenaSocket } from '../lib/useArenaSocket';
 import { BattleDemo } from './home/BattleDemo';
+import { Contracts } from './home/Contracts';
 import { LiveStrip } from './home/LiveStrip';
+import { NavBar } from './home/NavBar';
 import './home/home.css';
 import type { Account, Config } from '../lib/types';
 import { useConfig } from '../lib/useConfig';
@@ -291,7 +293,7 @@ function Footer({ config }: { config: Config | null }) {
           </a>
         ))}
       </nav>
-      <p className="data text-ink-muted">Live on Monad testnet · Built at Monad Blitz Jogja Vol. 2</p>
+      <p className="data text-ink-muted">Live on Monad testnet · Deployed on Monad mainnet · Built at Monad Blitz Jogja Vol. 2</p>
     </footer>
   );
 }
@@ -376,7 +378,8 @@ export function Home() {
   };
 
   return (
-    <main className="min-h-[100dvh] bg-surface text-ink">
+    <main id="top" className="landing min-h-[100dvh] bg-surface text-ink">
+      <NavBar />
       <div className={`${WRAP} flex flex-col gap-6 py-6 md:gap-8 md:py-10`}>
         <InAppBrowserBanner />
         <div className="grid gap-6 md:grid-cols-[1.1fr_1fr] md:items-center md:gap-10">
@@ -428,6 +431,7 @@ export function Home() {
             <Button onClick={() => navigate('/battle')}>Play Card Battle</Button>
           </div>
         </section>
+        <Contracts />
         <Footer config={config} />
       </div>
     </main>

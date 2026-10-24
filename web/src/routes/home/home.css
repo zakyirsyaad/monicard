@@ -52,3 +52,9 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.25; }
 }
+
+/* Sticky navbar: anchored headings stop below it. */
+.landing [id] { scroll-margin-top: 72px; }
+@media (prefers-reduced-motion: no-preference) {
+  html:has(.landing) { scroll-behavior: smooth; }
+}
