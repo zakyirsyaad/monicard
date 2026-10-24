@@ -1,5 +1,6 @@
 // Renders scene.html frame by frame. Usage:
 //   node render.mjs stills 1.2 5.6 ...   -> stills/t_<sec>.png
+//   node render.mjs thumb                -> monicard-thumbnail-<w>x<h>.png
 //   node render.mjs video                -> segments for reel_silent.mp4 + sfx.json
 // Env: SCENE (default battle.html), WIDTH, HEIGHT, SECONDS.
 import { createRequire } from 'node:module';
@@ -28,7 +29,11 @@ const frame = (page, t) => page.evaluate(t => { window.render(t); return documen
 
 const browser = await chromium.launch({ executablePath: process.env.CHROME || '/Users/mac/Library/Caches/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-mac-arm64/chrome-headless-shell' });
 const [mode, ...args] = process.argv.slice(2);
-if (mode === 'stills') {
+if (mode === 'thumb') {
+  const page = await openPage(browser);
+  const png = await page.evaluate(() => { window.renderThumb(); return document.getElementById('c').toDataURL('image/png').split(',')[1]; });
+  writeFileSync(path.join(here, `monicard-thumbnail-${WIDTH}x${HEIGHT}.png`), Buffer.from(png, 'base64'));
+} else if (mode === 'stills') {
   mkdirSync(path.join(here, 'stills'), { recursive: true });
   const page = await openPage(browser);
   for (const a of args) writeFileSync(path.join(here, `stills/t_${a}.png`), await frame(page, Number(a)));

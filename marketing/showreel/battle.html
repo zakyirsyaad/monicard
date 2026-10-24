@@ -256,12 +256,12 @@ function topBarAt(t, dark, width, y) {
 }
 
 // ---------- cards ----------
-function cardBack(x, y, s) {
+function cardBack(x, y, s, plain = false) {
   ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
   rrect(0, 0, 300, 560, 14, T.deep);
   for (let i = 1; i <= 6; i++) rrect(10 * i, 10 * i, 300 - 20 * i, 560 - 20 * i, Math.max(2, 14 - i * 2), null, `rgba(251,250,249,${.28 - i * .03})`, 1);
-  text('Monicard', 150, 286, { size: 34, weight: 800, color: T.onDeep, align: 'center', base: 'middle', ls: -.6 });
-  text('CARD BATTLE', 150, 318, { size: 10, weight: 600, color: 'rgba(251,250,249,.7)', align: 'center', ls: 1.2 });
+  if (!plain) text('Monicard', 150, 286, { size: 34, weight: 800, color: T.onDeep, align: 'center', base: 'middle', ls: -.6 });
+  if (!plain) text('CARD BATTLE', 150, 318, { size: 10, weight: 600, color: 'rgba(251,250,249,.7)', align: 'center', ls: 1.2 });
   ctx.restore();
 }
 // Foil: the one gradient the system allows, Legendary only.
@@ -913,6 +913,46 @@ function render(t) {
   [[38, T.deep], [43, T.surface], [48, T.deep]].forEach(([k, c]) => wipe(t, k, c, t < B(k) ? 'in' : 'out'));
 }
 window.render = render;
+
+// ---------- thumbnail (static, canvas space) ----------
+function thumbCards(cx, cy, s) {
+  ctx.save(); ctx.translate(cx + 150 * s, cy - 10 * s); ctx.rotate(.12);
+  cardBack(-150 * s * .92, -280 * s * .92, s * .92, true);
+  ctx.restore();
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(-.06);
+  cardFront(-150 * s, -280 * s, s, CARDS.abyssnad, { t: 1.4 });
+  chip('NEW', 150 * s - 30, -280 * s - 14, { size: 26 * s / 1.4, bg: T.purple, color: T.onPurple, align: 'center', r: 10, ls: 3 });
+  ctx.restore();
+}
+// Damage plate: solid surface so the number never sits on card text.
+function thumbHit(x, y, k) {
+  const w = 440 * k, h = 250 * k;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(-.05);
+  rrect(-w / 2, 0, w, h, 24 * k, T.raised, T.berry, 5 * k);
+  chip('Super effective ×1.5', 0, 26 * k, { size: 30 * k, bg: T.berry, color: T.onPurple, align: 'center', r: 12 * k });
+  text('-1,810', 0, 206 * k, { size: 120 * k, weight: 700, mono: true, color: T.berry, align: 'center', ls: -4 * k });
+  ctx.restore();
+}
+function renderThumb() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+  bg(T.surface);
+  text('MONICARD', 66, 112, { size: 26, ls: 26 * .14 });
+  chip('LIVE ON MONAD TESTNET', CW - 66, 82, { size: 20, bg: T.purpleTint, color: T.purpleInk, align: 'right' });
+  if (!LAND) {
+    ['Every move', 'is onchain.'].forEach((l, i) => text(l, W / 2, 340 + i * 160, { size: 156, weight: 800, align: 'center', ls: -5 }));
+    thumbCards(W / 2 - 90, 1080, 1.38);
+    thumbHit(W / 2 + 270, 1250, 1);
+    text('Scan. Play. No wallet.', W / 2, 1640, { size: 62, weight: 700, align: 'center', ls: -1.5 });
+    chip('Play free · monicard.xyz', W / 2, 1700, { size: 46, mono: true, bg: T.purple, color: T.onPurple, align: 'center', r: 18 });
+  } else {
+    ['Every move', 'is onchain.'].forEach((l, i) => text(l, 110, 420 + i * 160, { size: 160, weight: 800, ls: -5 }));
+    text('Card battles on Monad. No wallet.', 114, 700, { size: 52, weight: 600, color: T.muted, ls: -1 });
+    chip('Play free · monicard.xyz', 110, 770, { size: 44, mono: true, bg: T.purple, color: T.onPurple, r: 18 });
+    thumbCards(1420, 560, 1.4);
+    thumbHit(1240, 820, .85);
+  }
+}
+window.renderThumb = renderThumb;
 window.ready = (async () => {
   await Promise.all(['400 40px "Schibsted Grotesk"', '600 40px "Schibsted Grotesk"', '700 40px "Schibsted Grotesk"', '800 40px "Schibsted Grotesk"', '500 40px "JetBrains Mono"', '600 40px "JetBrains Mono"', '700 40px "JetBrains Mono"'].map(f => document.fonts.load(f)));
   await loadImages();
