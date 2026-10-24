@@ -1,5 +1,6 @@
 import { Route, Routes } from 'react-router-dom';
 import { Dev } from './routes/Dev';
+import { DuelRoute } from './routes/Duel';
 import { Home } from './routes/Home';
 import { Play } from './routes/Play';
 import { Pull } from './routes/Pull';
@@ -18,7 +19,7 @@ export function App() {
       <Route path="/" element={<Home />} />
       <Route path="/pull" element={<Pull />} />
       <Route path="/play" element={<Play />} />
-      <Route path="/duel/:id" element={<Placeholder name="Duel" />} />
+      <Route path="/duel/:id" element={<DuelRoute />} />
       <Route path="/arena" element={<Placeholder name="Arena" />} />
       <Route path="/dev" element={<Dev />} />
       <Route path="*" element={<Placeholder name="Not found" />} />

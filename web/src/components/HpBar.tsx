@@ -15,7 +15,8 @@ const clampPct = (n: number): number => Math.min(100, Math.max(0, n));
 const FILL_TRANSITION = 'width 250ms ease-out, left 250ms ease-out';
 
 export function HpBar({ side, name, hp, maxHp, pendingDamage }: HpBarProps) {
-  const shownHp = Math.max(0, hp - pendingDamage);
+  const pending = Math.max(0, pendingDamage);
+  const shownHp = Math.max(0, hp - pending);
   const toPct = (value: number): number => (maxHp > 0 ? clampPct((value / maxHp) * 100) : 0);
   const shownPct = toPct(shownHp);
   const chainPct = toPct(hp);

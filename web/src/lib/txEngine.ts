@@ -86,7 +86,14 @@ export function createTxEngine(deps: TxEngineDeps): TxEngine {
   let stats: TxStats = { txCount: 0, damageSent: 0, avgLatencyMs: 0, lastTxHash: null };
 
   function emit<E extends keyof TxEvents>(ev: E, payload: TxEvents[E]): void {
-    for (const cb of listeners[ev]) cb(payload);
+    for (const cb of listeners[ev]) {
+      try {
+        cb(payload);
+      } catch (err) {
+        // A broken listener must not stop the engine (the next send check runs after emit).
+        console.error(`txEngine ${ev} listener failed`, err);
+      }
+    }
   }
 
   function clearTimer(): void {

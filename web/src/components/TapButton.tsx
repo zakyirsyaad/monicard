@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { KeyboardEvent, PointerEvent } from 'react';
 import { prefersReducedMotion } from '../lib/motion';
 
 export interface TapButtonProps {
@@ -18,7 +19,7 @@ export function TapButton({ state, countdown, onTap }: TapButtonProps) {
 
   useEffect(() => () => clearTimeout(timer.current), []);
 
-  const handlePointerDown = () => {
+  const press = () => {
     if (state !== 'active') return;
     onTap();
     if (prefersReducedMotion()) return;
@@ -26,6 +27,17 @@ export function TapButton({ state, countdown, onTap }: TapButtonProps) {
     setPressed(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setPressed(false), PRESS_MS);
+  };
+
+  const handlePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    if (event.button === 0) press();
+  };
+
+  // Keyboard activation; there is deliberately no onClick (a click would double-count a tap).
+  const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    if (!event.repeat) press();
   };
 
   const active = state === 'active';
@@ -39,6 +51,7 @@ export function TapButton({ state, countdown, onTap }: TapButtonProps) {
       disabled={!active}
       aria-label={label}
       onPointerDown={handlePointerDown}
+      onKeyDown={handleKeyDown}
       className={`display-tap min-h-[120px] w-full select-none rounded-tap ${look}${monoClass}`}
       style={{
         touchAction: 'manipulation',

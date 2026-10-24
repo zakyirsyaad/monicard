@@ -386,6 +386,29 @@ describe('txEngine extra rules', () => {
     expect(engine.stats().txCount).toBe(0);
   });
 
+  it('a throwing listener does not skip the next send check', async () => {
+    const report = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { engine } = setup();
+    const after = vi.fn();
+    engine.on('confirmed', () => {
+      throw new Error('listener failed');
+    });
+    engine.on('confirmed', after);
+    engine.onBlock(110);
+    engine.start(DUEL);
+    engine.tap();
+    await flush();
+    taps(engine, 2);
+    await vi.advanceTimersByTimeAsync(1000);
+    relay.calls[0]!.resolve(ok(109));
+    await flush();
+    expect(after).toHaveBeenCalledTimes(1);
+    expect(relay.calls).toHaveLength(2);
+    expect(decode(relay.calls[1]!.raw).taps).toBe(2);
+    expect(report).toHaveBeenCalledTimes(1);
+    report.mockRestore();
+  });
+
   it('estimates pending damage from buffer, in-flight and unreflected txs', async () => {
     const { engine } = setup();
     const skill = skillDamage(ATK, MULT, 1000, 1500);
