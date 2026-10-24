@@ -13,6 +13,8 @@ export type AppDeps = {
   chainId: number;
   cards: Hex;
   arena: Hex;
+  /** StakeVault address; omitted from /config when the deployment has none. */
+  stakeVault?: Hex;
   gasLimits: Record<string, number>;
   batchMs: number;
   pullPrice: bigint;
@@ -102,7 +104,11 @@ export function buildApp(deps: AppDeps): Hono {
       const gasPrice = await deps.getGasPrice();
       return c.json({
         chainId: deps.chainId,
-        contracts: { cards: deps.cards, arena: deps.arena },
+        contracts: {
+          cards: deps.cards,
+          arena: deps.arena,
+          ...(deps.stakeVault ? { stakeVault: deps.stakeVault } : {}),
+        },
         gasLimits: deps.gasLimits,
         gasPrice: gasPrice.toString(),
         batchMs: deps.batchMs,

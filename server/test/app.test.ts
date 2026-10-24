@@ -10,6 +10,7 @@ import { buildApp, isApiPath, readBots, spaFallback, type AppDeps } from '../src
 
 const CARDS = '0x7af33cb3823ff99d37411a678452a7980d14cf9f' as Hex;
 const ARENA = '0xc08c323df6a5f9fabaF75A6060E4CA357F2251f9' as Hex;
+const VAULT = '0x642C1364b62344128087549ceeD9268D5E3385df' as Hex;
 const AGENT = '0x3333333333333333333333333333333333333333' as Hex;
 const USER = '0x4444444444444444444444444444444444444444' as Hex;
 const OTHER = '0x5555555555555555555555555555555555555555' as Hex;
@@ -78,6 +79,24 @@ describe('GET /config', () => {
       agent: AGENT,
       bots: [],
     });
+  });
+
+  test('exposes the StakeVault and its gas limits when configured', async () => {
+    const app = buildApp(
+      deps({
+        stakeVault: VAULT,
+        gasLimits: { ...deps().gasLimits, stake: 131_000, claim: 154_000 },
+      }),
+    );
+
+    const body = (await (await app.request('/config')).json()) as {
+      contracts: Record<string, string>;
+      gasLimits: Record<string, number>;
+    };
+
+    expect(body.contracts).toEqual({ cards: CARDS, arena: ARENA, stakeVault: VAULT });
+    expect(body.gasLimits.stake).toBe(131_000);
+    expect(body.gasLimits.claim).toBe(154_000);
   });
 
   test('reads bot addresses from DATA_DIR/bots.json', async () => {

@@ -37,6 +37,8 @@ export type ComposeConfig = {
   chainId: number;
   cards: Hex;
   arena: Hex;
+  /** StakeVault address; absent on deployments without one (anvil). */
+  stakeVault?: Hex;
   gasLimits: GasLimits;
   batchMs: number;
   event: EventInfo;
@@ -160,6 +162,12 @@ export function composeApp(deps: ComposeDeps): Composed {
   const getBalance = (address: Hex): Promise<bigint> => chain.call((c) => c.getBalance({ address }));
   const getAgentMessage = (): AgentMsg | null => null;
 
+  // GasLimits carries optional stake/claim keys; the app deps and the relay take only defined numbers.
+  const gasLimits: Record<string, number> = {};
+  for (const [fn, limit] of Object.entries(config.gasLimits)) {
+    if (limit !== undefined) gasLimits[fn] = limit;
+  }
+
   const hub = createReceiptHub();
   const stats = createStats({ cards: config.cards, arena: config.arena });
   attachStats(hub, stats);
@@ -168,7 +176,8 @@ export function composeApp(deps: ComposeDeps): Composed {
     chainId: config.chainId,
     cards: config.cards,
     arena: config.arena,
-    gasLimits: config.gasLimits,
+    stakeVault: config.stakeVault,
+    gasLimits,
     batchMs: config.batchMs,
     pullPrice: deps.pullPrice,
     event: config.event,
@@ -188,7 +197,8 @@ export function composeApp(deps: ComposeDeps): Composed {
         chainId: config.chainId,
         cards: config.cards,
         arena: config.arena,
-        gasLimits: config.gasLimits,
+        stakeVault: config.stakeVault,
+        gasLimits,
         pullPrice: deps.pullPrice,
       },
       getBalance,

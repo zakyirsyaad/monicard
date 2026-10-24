@@ -16,6 +16,7 @@ import type { PollerDeps } from '../src/poller';
 
 const CARDS = '0x7af33cb3823ff99d37411a678452a7980d14cf9f' as Hex;
 const ARENA = '0xc08c323df6a5f9fabaF75A6060E4CA357F2251f9' as Hex;
+const VAULT = '0x642C1364b62344128087549ceeD9268D5E3385df' as Hex;
 const AGENT = '0x3333333333333333333333333333333333333333' as Hex;
 const BOT = '0x6666666666666666666666666666666666666666' as Hex;
 const VALID_ADDRESS = '0x4444444444444444444444444444444444444444';
@@ -112,6 +113,26 @@ describe('composeApp HTTP surface', () => {
     expect(json.pullPrice).toBe('50000000000000000');
     expect(json.agent).toBe(AGENT);
     expect(json.bots).toEqual([BOT]);
+  });
+
+  test('GET /config exposes the StakeVault and gas limits from the deployment config', async () => {
+    const base = makeDeps();
+    const deps: ComposeDeps = {
+      ...base,
+      config: {
+        ...base.config,
+        stakeVault: VAULT,
+        gasLimits: { ...base.config.gasLimits, stake: 131_000, claim: 154_000 },
+      },
+    };
+
+    const { app } = composeApp(deps);
+    const res = await app.request('/config');
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { contracts: Record<string, unknown>; gasLimits: Record<string, number> };
+    expect(json.contracts).toEqual({ cards: CARDS, arena: ARENA, stakeVault: VAULT });
+    expect(json.gasLimits.stake).toBe(131_000);
+    expect(json.gasLimits.claim).toBe(154_000);
   });
 
   test('POST /relay with an invalid body is a 400 from the relay route', async () => {

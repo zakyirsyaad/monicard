@@ -28,6 +28,7 @@ async function buildComposed() {
       chainId: env.chainId,
       cards: env.cards,
       arena: env.arena,
+      stakeVault: env.stakeVault,
       gasLimits: env.gasLimits,
       batchMs: env.BATCH_MS,
       event: { name: env.EVENT_NAME, sponsor: env.EVENT_SPONSOR ?? null },

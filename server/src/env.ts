@@ -53,6 +53,7 @@ const deploymentSchema = z.object({
   chainId: z.number().int().positive(),
   cards: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
   arena: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+  stakeVault: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
   deployBlock: z.number().int().nonnegative().optional(),
   gasLimits: z.object({
     freePull: z.number().int().positive(),
@@ -61,6 +62,8 @@ const deploymentSchema = z.object({
     joinDuel: z.number().int().positive(),
     attack: z.number().int().positive(),
     settle: z.number().int().positive(),
+    stake: z.number().int().positive().optional(),
+    claim: z.number().int().positive().optional(),
   }),
 });
 
@@ -91,6 +94,7 @@ export type Env = {
   chainId: number;
   cards: Hex;
   arena: Hex;
+  stakeVault?: Hex;
   gasLimits: GasLimits;
 };
 
@@ -139,6 +143,7 @@ function buildEnv(): Env {
     chainId: deployment.chainId,
     cards: deployment.cards as Hex,
     arena: deployment.arena as Hex,
+    stakeVault: deployment.stakeVault as Hex | undefined,
     gasLimits: deployment.gasLimits,
   };
 }
