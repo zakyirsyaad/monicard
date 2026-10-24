@@ -242,6 +242,45 @@ contract BlitzArenaTest is Test {
         assertFalse(d.skill2);
     }
 
+    /// @dev Addendum N11: "Last stand" scales with the ATTACKER's own missing HP,
+    ///      not the defender's. A nearly dead attacker must hit for the 552 vector,
+    ///      while a full-HP attacker only gets the base 120.
+    function test_skill_usesAttackerOwnHp() public {
+        // Alice: atk 12, maxHp 1500. Bob: atk 9, maxHp 1500. Same element → both mult 100.
+        _setCard(cardA, 12, 1500, 1);
+        _setCard(cardB, 9, 1500, 1);
+
+        // Control: full-HP attacker → base skill damage 10% of atk = 120.
+        (uint256 controlId, uint32 controlStart) = _start();
+        vm.roll(controlStart + 1);
+        vm.prank(alice);
+        arena.attack(controlId, 0, true);
+        assertEq(_duel(controlId).hp2, 1500 - 120);
+
+        // Main case: bob taps alice down to exactly 150/1500 (5 × 30 taps × 9 atk = 1350),
+        // leaving bob untouched at full 1500/1500.
+        (uint256 id, uint32 s) = _start();
+        for (uint256 i = 1; i <= 5; ++i) {
+            vm.roll(uint256(s) + 10 * i);
+            vm.prank(bob);
+            arena.attack(id, 30, false);
+        }
+        BlitzArena.Duel memory hurt = _duel(id);
+        assertEq(hurt.hp1, 150);
+        assertEq(hurt.maxHp1, 1500);
+        assertEq(hurt.hp2, 1500);
+
+        // Alice's Last stand must use her own 150/1500, i.e. 552 — not bob's full-HP 120.
+        vm.roll(s + 51);
+        vm.prank(alice);
+        arena.attack(id, 0, true);
+
+        BlitzArena.Duel memory d = _duel(id);
+        assertEq(d.hp2, 1500 - 552);
+        assertEq(d.hp1, 150);
+        assertTrue(d.skill1);
+    }
+
     // ---------------------------------------------------------------- KO paths
 
     function test_attack_koEndsDuel() public {

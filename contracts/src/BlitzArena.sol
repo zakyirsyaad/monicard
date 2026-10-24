@@ -132,18 +132,16 @@ contract BlitzArena {
         if (d.status != Status.Active) return;
 
         // 2. Past the duel window: close by remaining HP and ignore the taps.
-        uint256 start = d.startBlock;
-        if (block.number >= start + DUEL_BLOCKS) {
+        if (block.number >= uint256(d.startBlock) + DUEL_BLOCKS) {
             _closeByHp(d, id);
             return;
         }
 
         // 3. Before the countdown ended: no effect.
-        if (block.number < start) return;
+        if (block.number < d.startBlock) return;
 
         // 4. Clamp taps to elapsed blocks and the per-tx cap.
-        uint256 lastBlock = isP1 ? uint256(d.lastBlock1) : uint256(d.lastBlock2);
-        uint256 allowed = (block.number - lastBlock) * MAX_TAPS_PER_BLOCK;
+        uint256 allowed = (block.number - (isP1 ? uint256(d.lastBlock1) : uint256(d.lastBlock2))) * MAX_TAPS_PER_BLOCK;
         if (allowed > MAX_TAPS_PER_TX) allowed = MAX_TAPS_PER_TX;
         if (allowed > taps) allowed = taps;
         // `allowed` is clamped to MAX_TAPS_PER_TX (30), so the downcast cannot truncate.
@@ -154,11 +152,12 @@ contract BlitzArena {
         if (isP1) d.lastBlock1 = uint32(block.number);
         else d.lastBlock2 = uint32(block.number);
 
-        // 5. Damage in uint256; the skill reads the opponent's pre-attack HP.
+        // 5. Damage in uint256; "Last stand" reads the ATTACKER's pre-attack HP (addendum N11).
         uint16 atk = isP1 ? d.atk1 : d.atk2;
         uint8 mult = isP1 ? d.mult1 : d.mult2;
+        uint16 myHp = isP1 ? d.hp1 : d.hp2;
+        uint16 myMaxHp = isP1 ? d.maxHp1 : d.maxHp2;
         uint16 oppHp = isP1 ? d.hp2 : d.hp1;
-        uint16 oppMaxHp = isP1 ? d.maxHp2 : d.maxHp1;
 
         uint256 dmg = tapDamage(allowedTaps, atk, mult);
 
@@ -166,11 +165,11 @@ contract BlitzArena {
             if (isP1) {
                 if (!d.skill1) {
                     d.skill1 = true;
-                    dmg += skillDamage(atk, mult, oppHp, oppMaxHp);
+                    dmg += skillDamage(atk, mult, myHp, myMaxHp);
                 }
             } else if (!d.skill2) {
                 d.skill2 = true;
-                dmg += skillDamage(atk, mult, oppHp, oppMaxHp);
+                dmg += skillDamage(atk, mult, myHp, myMaxHp);
             }
         }
 
@@ -244,7 +243,8 @@ contract BlitzArena {
         return (uint256(taps) * uint256(atk) * uint256(mult)) / 100;
     }
 
-    /// @notice Skill damage: base 10% of ATK, up to 50% when the target is nearly dead.
+    /// @notice Skill damage: base 10% of ATK, up to 50% as the attacker's own HP drops.
+    /// @dev Callers pass the attacker's HP; "Last stand" scales with the attacker's missing HP (N11).
     function skillDamage(uint16 atk, uint8 mult, uint16 hp, uint16 maxHp) public pure returns (uint256) {
         uint256 maxH = uint256(maxHp);
         uint256 missing = maxH > hp ? maxH - uint256(hp) : 0;
