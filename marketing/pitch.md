@@ -36,9 +36,9 @@ Prinsip: hanya demo fitur yang sudah terbukti jalan di HP (rubrik "all announced
 
 **2:30 – 2:50 · Pasar dan bisnis (PMF + revenue)**
 > "Who pays? Event organizers, like this one. Every meetup and hackathon needs an onchain onboarding moment, and most people never get past installing a wallet. Here you scan, and you're playing in three seconds. Today, **[X] people in this room pulled a card and sent [Y] transactions**.
-> Revenue is already onchain: sponsored event mode, paid packs at 0.05 MON into a treasury, a 5% royalty on every resale, and staked duels with a 5% rake. A battle action costs about a cent, so onboarding a player costs less than a sticker."
+> The battle is free to play: that's our funnel. Revenue sits around it, already onchain: sponsored event mode, like this projector screen; paid packs at 0.05 MON into a contract treasury, **[Z] MON collected today**; a 5% royalty on every resale; and staked duels with a 5% rake. A battle action costs about a cent, so onboarding a player costs less than a sticker. Next: staking in Card Battle itself."
 
-[X dan Y dihitung dari event `CardMinted` dan jumlah tx onchain tepat sebelum pitch; bacakan, jangan dikarang.]
+[X, Y, Z dihitung koordinator tepat sebelum pitch (event `CardMinted`, jumlah tx, saldo treasury NadCards); bacakan, jangan dikarang. Kalau Staked Card Battle sempat jadi, ganti kalimat terakhir menjadi "And staking is live in Card Battle too."]
 
 **2:50 – 3:00 · Sebutkan dengan lantang (wajib, rubrik Basic)**
 > "Everything is public:

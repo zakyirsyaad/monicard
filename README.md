@@ -93,10 +93,10 @@ Repo layout: `contracts/` (Foundry), `shared/` (game formulas + ABIs), `server/`
 
 | Stream | How | Status |
 |---|---|---|
-| Event mode (B2B) | Organisers pay for a branded arena; the relay subsidises players' gas | Live (`/arena`) |
+| Event mode (B2B) | Organisers pay for a branded arena; the relay subsidises players' gas. Card Battle itself is free to play and acts as the funnel | Live (`/arena`) |
 | Paid packs | First pull free, then 0.05 MON per pack, odds shown and rolled onchain; funds go to the contract treasury (`paidPull` / `withdraw`) | Live |
 | Marketplace royalty | 5% on every resale (ERC-2981) | Live (in the contract) |
-| Staked duels | Both players stake MON, the winner takes the pot minus a 5% rake to the treasury | Live in Tap Blitz (`StakeVault`) |
+| Staked duels | Both players stake MON, the winner takes the pot minus a 5% rake to the treasury | Live in Tap Blitz (`StakeVault`); Card Battle staking is next |
 | Season pass and cosmetics | Players | Roadmap |
 
 Unit cost: one Card Battle action costs about 101,000 gas, roughly 0.01 MON at 102 gwei. Onboarding a player costs less than a sticker.
