@@ -27,8 +27,10 @@ describe('isRetryable', () => {
     expect(isRetryable(tooMany())).toBe(true);
     expect(isRetryable(unavailable())).toBe(true);
     expect(isRetryable(new HttpRequestError({ url: RPC_A, status: 500 }))).toBe(true);
+    expect(isRetryable(new HttpRequestError({ url: RPC_A, status: 502 }))).toBe(true);
     expect(isRetryable(new TimeoutError({ url: RPC_A, body: {} }))).toBe(true);
     expect(isRetryable(new Error('The request timed out'))).toBe(true);
+    expect(isRetryable(new Error('Internal error'))).toBe(true);
     expect(isRetryable(Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNRESET' } }))).toBe(true);
   });
 
@@ -91,11 +93,33 @@ describe('createChain', () => {
     });
 
     await expect(chain.call((c) => c.getBlockNumber())).resolves.toBe(42n);
-    expect(attempts).toEqual(['bad', 'bad', 'good']);
-    expect(sleeps).toEqual([150]);
+    expect(attempts).toEqual(['bad', 'bad', 'bad', 'good']);
+    expect(sleeps).toEqual([150, 300]);
   });
 
-  test('throws after two attempts when there is no other URL', async () => {
+  test('recovers on the third attempt after two transient failures', async () => {
+    let attempts = 0;
+    const flaky = {
+      getBlockNumber: async () => {
+        attempts += 1;
+        if (attempts < 3) throw unavailable();
+        return 8n;
+      },
+    } as unknown as PublicClient;
+    const sleeps: number[] = [];
+    const chain = createChain([RPC_A], 10143, {
+      clients: [flaky],
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    await expect(chain.call((c) => c.getBlockNumber())).resolves.toBe(8n);
+    expect(attempts).toBe(3);
+    expect(sleeps).toEqual([150, 300]);
+  });
+
+  test('throws after three attempts when there is no other URL', async () => {
     let attempts = 0;
     const bad = {
       getBlockNumber: async () => {
@@ -103,10 +127,17 @@ describe('createChain', () => {
         throw tooMany();
       },
     } as unknown as PublicClient;
-    const chain = createChain([RPC_A], 10143, { clients: [bad], sleep: async () => {} });
+    const sleeps: number[] = [];
+    const chain = createChain([RPC_A], 10143, {
+      clients: [bad],
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
 
     await expect(chain.call((c) => c.getBlockNumber())).rejects.toMatchObject({ status: 429 });
-    expect(attempts).toBe(2);
+    expect(attempts).toBe(3);
+    expect(sleeps).toEqual([150, 300]);
   });
 
   test('does not fail over on a non-retryable error', async () => {

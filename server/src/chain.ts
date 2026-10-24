@@ -2,6 +2,7 @@ import { createPublicClient, defineChain, http, type PublicClient } from 'viem';
 import { env } from './env';
 
 export const RPC_RETRY_DELAY_MS = 150;
+export const RPC_MAX_ATTEMPTS = 3;
 export const RPC_TIMEOUT_MS = 10_000;
 export const GAS_PRICE_TTL_MS = 10_000;
 
@@ -54,9 +55,15 @@ export function isRetryable(error: unknown): boolean {
         message.includes('timeout') ||
         message.includes('fetch failed') ||
         message.includes('socket hang up') ||
+        message.includes('connection reset') ||
         message.includes('econnreset') ||
         message.includes('too many requests') ||
-        message.includes('rate limit')
+        message.includes('rate limit') ||
+        message.includes('bad gateway') ||
+        message.includes('service unavailable') ||
+        message.includes('gateway timeout') ||
+        message.includes('temporarily unavailable') ||
+        message.includes('internal error')
       ) {
         return true;
       }
@@ -110,13 +117,13 @@ export function createChain(
   async function call<T>(fn: (client: PublicClient) => Promise<T>): Promise<T> {
     let lastError: unknown = new Error('all RPC endpoints failed');
     for (const client of clients) {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+      for (let attempt = 0; attempt < RPC_MAX_ATTEMPTS; attempt += 1) {
         try {
           return await fn(client);
         } catch (error) {
           lastError = error;
           if (!isRetryable(error)) throw error;
-          if (attempt === 0) await sleep(retryDelayMs);
+          if (attempt < RPC_MAX_ATTEMPTS - 1) await sleep(retryDelayMs * (attempt + 1));
         }
       }
     }
