@@ -7,8 +7,9 @@ Monicard is a real-time 1v1 card battle played entirely onchain. Draw cards from
 Built in one day at **Monad Blitz Jogja Vol. 2** (24 October 2026) by a solo builder with a team of AI agents.
 
 - **Repo:** https://github.com/zakyirsyaad/monicard
-- **Live app:** https://nadgacha.43-134-58-217.sslip.io (open on your phone)
-- **Projector view:** https://nadgacha.43-134-58-217.sslip.io/arena
+- **Live app:** https://monicard.xyz (open on your phone)
+- **Projector view:** https://monicard.xyz/arena
+- **Mirror:** https://nadgacha.43-134-58-217.sslip.io (same server)
 - **Network:** Monad Testnet (chain id 10143)
 
 ## Try it in 30 seconds
