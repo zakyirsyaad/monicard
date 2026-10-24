@@ -11,6 +11,8 @@ import type { ChainLike } from './chainTypes';
 import type { ReceiptHub, TxReceipt } from './receiptHub';
 
 export const RELAY_TIMEOUT_MS = 5_000;
+/** Longest the early balance check may delay a request before it is skipped (fail open). */
+export const BALANCE_TIMEOUT_MS = 1_000;
 export const RATE_WINDOW_MS = 1_000;
 export const MAX_TX_PER_SENDER = 3;
 export const MAX_TX_PER_IP = 30;
@@ -201,7 +203,8 @@ type Outcome =
   | { kind: 'timeout' }
   | { kind: 'send-error'; err: unknown };
 
-const NEVER = new Promise<Outcome>(() => undefined);
+/** A fresh pending promise per call, so nothing long-lived retains a finished request. */
+const never = (): Promise<Outcome> => new Promise<Outcome>(() => undefined);
 
 const lookupReceipt = (deps: RelayDeps, hash: Hex): Promise<TxReceipt | null> =>
   deps.chain.call((c) => c.getTransactionReceipt({ hash })).catch(() => null);
@@ -219,12 +222,12 @@ async function findReceipt(deps: RelayDeps, hash: Hex): Promise<TxReceipt | null
 async function sendPath(deps: RelayDeps, raw: Hex, hash: Hex): Promise<Outcome> {
   try {
     await deps.chain.call((c) => c.sendRawTransaction({ serializedTransaction: raw }));
-    return NEVER;
+    return never();
   } catch (err) {
-    if (isTransportError(err)) return NEVER;
+    if (isTransportError(err)) return never();
     if (isKnownTxError(err)) {
       const receipt = await lookupReceipt(deps, hash);
-      return receipt ? { kind: 'receipt', receipt } : NEVER;
+      return receipt ? { kind: 'receipt', receipt } : never();
     }
     const receipt = await findReceipt(deps, hash);
     return receipt ? { kind: 'receipt', receipt } : { kind: 'send-error', err };
@@ -253,7 +256,8 @@ export async function handleRelay(body: unknown, ip: string, deps: RelayDeps): P
   // The waiter MUST exist before the send: with ~300 ms blocks the receipt can be ingested
   // while sendRawTransaction is still in flight. The request then ends with whichever comes
   // first: the hub receipt or a decisive send result, bounded by the waiter's timeout.
-  const waiting = deps.hub.wait(checked.hash, deps.timeoutMs ?? RELAY_TIMEOUT_MS);
+  const budgetMs = Math.max(0, (deps.timeoutMs ?? RELAY_TIMEOUT_MS) - (now() - startedAt));
+  const waiting = deps.hub.wait(checked.hash, budgetMs);
   const fromHub: Promise<Outcome> = waiting.then(
     (receipt): Outcome => ({ kind: 'receipt', receipt }),
     (): Outcome => ({ kind: 'timeout' }),
@@ -273,9 +277,26 @@ export async function handleRelay(body: unknown, ip: string, deps: RelayDeps): P
   });
 }
 
-/** Fails open: if the balance source is down the node itself still rejects underfunded txs. */
+/** Fails open: a down or slow balance source must not block the relay; the node still rejects underfunded txs. */
 async function checkBalance(deps: RelayDeps, sender: Hex, tx: ValidTx): Promise<RelayResult | null> {
-  const balance = await deps.getBalance(sender).catch(() => null);
+  const balance = await withTimeout(deps.getBalance(sender).catch(() => null), BALANCE_TIMEOUT_MS);
   if (balance === null) return null;
   return tx.gas * tx.maxFeePerGas + tx.value > balance ? fail(400, { reason: 'balance' }) : null;
+}
+
+/** Resolves with the promise's value, or null if it takes longer than `ms`. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise<T | null>((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(null);
+      },
+    );
+  });
 }

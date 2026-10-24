@@ -12,7 +12,7 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import { describe, expect, test, vi } from 'vitest';
 import { createReceiptHub, type ReceiptHub } from '../src/receiptHub';
-import { createRateLimiter, handleRelay, validateRawTx, type RelayDeps } from '../src/relay';
+import { BALANCE_TIMEOUT_MS, RELAY_TIMEOUT_MS, createRateLimiter, handleRelay, validateRawTx, type RelayDeps } from '../src/relay';
 
 // anvil's well-known public dev key #0 (test key, never holds value)
 const ANVIL_KEY: Hex = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
@@ -417,6 +417,43 @@ describe('handleRelay', () => {
     const res = await handleRelay({ rawTx: await signTx() }, 'ip', deps);
     expect(res.status).toBe(200);
     expect(sent).toHaveLength(1);
+  });
+
+  test('a balance lookup that never resolves is skipped after BALANCE_TIMEOUT_MS and the relay still sends', async () => {
+    vi.useFakeTimers();
+    try {
+      const raw = await signTx();
+      const { deps, sent } = setup({}, { getBalance: () => new Promise<bigint>(() => undefined), now: undefined, timeoutMs: 5_000 });
+      let result: unknown;
+      const pending = handleRelay({ rawTx: raw }, 'ip', deps).then((r) => (result = r));
+      await vi.advanceTimersByTimeAsync(BALANCE_TIMEOUT_MS - 1);
+      expect(sent).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1);
+      await pending;
+      expect(sent).toHaveLength(1);
+      expect(result).toMatchObject({ status: 200 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('the 5 s bound starts at request entry: a slow balance check eats into the receipt wait', async () => {
+    vi.useFakeTimers();
+    try {
+      const raw = await signTx();
+      const { deps } = setup(
+        { onSend: (r) => keccak256(r) }, // accepted, but never mined
+        { getBalance: () => new Promise<bigint>(() => undefined), now: undefined, timeoutMs: RELAY_TIMEOUT_MS },
+      );
+      let done = false;
+      const pending = handleRelay({ rawTx: raw }, 'ip', deps).then((r) => ((done = true), r));
+      await vi.advanceTimersByTimeAsync(RELAY_TIMEOUT_MS - 1);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await pending).toEqual({ status: 504, json: { reason: 'timeout', hash: keccak256(raw) } });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('429 after 3 txs per second from one sender, recovers after the window', async () => {

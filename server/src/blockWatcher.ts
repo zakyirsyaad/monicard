@@ -11,11 +11,17 @@ export const MAX_CATCHUP_BLOCKS = 50;
 export const RECEIPT_CONCURRENCY = 6;
 /** A block that keeps failing for this long is skipped (loudly) so the watcher can catch up. */
 export const STUCK_BLOCK_MS = 10_000;
+/** onError reports the first failure, then at most one summary (with a suppressed count) per interval. */
+export const ERROR_LOG_INTERVAL_MS = 5_000;
+/** After failed ticks the delay doubles from pollMs up to this ceiling; a good tick resets it. */
+export const MAX_BACKOFF_MS = 2_000;
 
 export type WatcherOptions = {
   pollMs?: number;
   /** Called when a tick fails; the watcher retries on the next tick without skipping blocks. */
   onError?: (err: unknown) => void;
+  /** Called once when a stuck block is skipped (onError also receives an unthrottled message). */
+  onStuck?: (block: bigint) => void;
   now?: () => number;
 };
 
@@ -41,6 +47,15 @@ async function fetchBlockReceipts(chain: ChainLike, block: bigint): Promise<TxRe
   return raw.map((r) => formatTransactionReceipt(r));
 }
 
+/** Callbacks are for logging; a throwing one must never kill the watcher loop. */
+function safely(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    // intentionally ignored: see above
+  }
+}
+
 export function startBlockWatcher(chain: ChainLike, hub: ReceiptHub, opts: WatcherOptions = {}): BlockWatcher {
   const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
   const now = opts.now ?? Date.now;
@@ -48,6 +63,9 @@ export function startBlockWatcher(chain: ChainLike, hub: ReceiptHub, opts: Watch
   let head = 0n;
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let consecutiveFailures = 0;
+  let lastReportAt: number | null = null;
+  let suppressed = 0;
   let failing: { block: bigint; since: number; reported: boolean } | null = null;
 
   /** Fetch a chunk in parallel, ingest the successful prefix in order, throw the first failure. */
@@ -71,9 +89,24 @@ export function startBlockWatcher(chain: ChainLike, hub: ReceiptHub, opts: Watch
     if (failing?.block !== block) failing = { block, since: now(), reported: false };
     if (failing.reported || now() - failing.since <= STUCK_BLOCK_MS) return;
     failing.reported = true;
-    opts.onError?.(new Error(`block ${block} stuck for over ${STUCK_BLOCK_MS} ms, skipping to head ${head}`));
+    safely(() => opts.onError?.(new Error(`block ${block} stuck for over ${STUCK_BLOCK_MS} ms, skipping to head ${head}`)));
+    safely(() => opts.onStuck?.(block));
     cursor = head;
     failing = null;
+  }
+
+  /** Throttled error reporting: first error at once, then one summary per interval. */
+  function report(err: unknown): void {
+    const t = now();
+    if (lastReportAt !== null && t - lastReportAt < ERROR_LOG_INTERVAL_MS) {
+      suppressed += 1;
+      return;
+    }
+    const extra = suppressed;
+    lastReportAt = t;
+    suppressed = 0;
+    const shown = extra === 0 ? err : new Error(`${(err as Error)?.message ?? String(err)} (+${extra} similar errors suppressed)`, { cause: err });
+    safely(() => opts.onError?.(shown));
   }
 
   /** Returns true when more blocks remain (catch-up was capped). */
@@ -91,12 +124,17 @@ export function startBlockWatcher(chain: ChainLike, hub: ReceiptHub, opts: Watch
 
   async function loop(): Promise<void> {
     let more = false;
+    let delay = pollMs;
     try {
       more = await tick();
+      consecutiveFailures = 0;
+      delay = more ? 0 : pollMs;
     } catch (err) {
-      opts.onError?.(err);
+      report(err);
+      consecutiveFailures += 1;
+      delay = Math.min(pollMs * 2 ** consecutiveFailures, MAX_BACKOFF_MS);
     }
-    if (!stopped) timer = setTimeout(loop, more ? 0 : pollMs);
+    if (!stopped) timer = setTimeout(loop, delay);
   }
 
   timer = setTimeout(loop, 0);

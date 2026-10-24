@@ -1,6 +1,6 @@
 import type { Hex, PublicClient } from 'viem';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { RECEIPT_CONCURRENCY, STUCK_BLOCK_MS, startBlockWatcher } from '../src/blockWatcher';
+import { ERROR_LOG_INTERVAL_MS, MAX_BACKOFF_MS, RECEIPT_CONCURRENCY, STUCK_BLOCK_MS, startBlockWatcher } from '../src/blockWatcher';
 import type { ChainLike } from '../src/chainTypes';
 
 const POLL_MS = 150;
@@ -129,7 +129,7 @@ describe('block watcher', () => {
     expect(w.latestBlock()).toBe(11n);
     expect(errors).toHaveLength(1);
     state.failReceiptsFor.clear();
-    await tick();
+    await tick(MAX_BACKOFF_MS);
     expect(ingested.map((i) => i.block)).toEqual([10n, 11n, 12n, 13n]);
     w.stop();
   });
@@ -144,7 +144,7 @@ describe('block watcher', () => {
     expect(ingested).toHaveLength(0);
     expect(w.latestBlock()).toBe(0n);
     state.failHead = false;
-    await tick();
+    await tick(MAX_BACKOFF_MS);
     expect(ingested.map((i) => i.block)).toEqual([10n]);
     w.stop();
   });
@@ -209,7 +209,7 @@ describe('block watcher', () => {
     expect(w.latestBlock()).toBe(12n);
     expect(errors).toHaveLength(1);
     state.failReceiptsFor.clear();
-    await tick(POLL_MS);
+    await tick(MAX_BACKOFF_MS);
     expect(ingested.map((i) => i.block)).toEqual([10n, 11n, 12n, 13n, 14n, 15n, 16n]);
     w.stop();
   });
@@ -226,14 +226,14 @@ describe('block watcher', () => {
     await tick(STUCK_BLOCK_MS - 500);
     expect(w.latestBlock()).toBe(11n);
     expect(errors.some((e) => /stuck/.test(e.message))).toBe(false);
-    await tick(1_000);
+    await tick(3_000);
     const stuck = errors.filter((e) => /stuck/.test(e.message));
     expect(stuck).toHaveLength(1);
     expect(stuck[0]!.message).toContain('12');
     expect(w.latestBlock()).toBe(14n);
     expect(w.lag()).toBe(0n);
     state.head = 15;
-    await tick(POLL_MS);
+    await tick(MAX_BACKOFF_MS);
     expect(ingested.map((i) => i.block)).toEqual([10n, 11n, 15n]);
     expect(errors.filter((e) => /stuck/.test(e.message))).toHaveLength(1);
     w.stop();
@@ -252,8 +252,92 @@ describe('block watcher', () => {
     await tick(POLL_MS);
     expect(w.lag()).toBe(3n); // handled 11, head 14
     state.failReceiptsFor.clear();
-    await tick(POLL_MS);
+    await tick(MAX_BACKOFF_MS);
     expect(w.lag()).toBe(0n);
+    w.stop();
+  });
+
+  test('onStuck is called once with the skipped block', async () => {
+    vi.useFakeTimers();
+    const { chain, state } = fakeChain(10);
+    const { hub } = fakeHub();
+    const stuck: bigint[] = [];
+    const w = startBlockWatcher(chain, hub as never, { pollMs: POLL_MS, onError: () => undefined, onStuck: (b) => stuck.push(b) });
+    await tick(0);
+    state.head = 14;
+    state.failReceiptsFor.add(12);
+    await tick(STUCK_BLOCK_MS + 5_000);
+    expect(stuck).toEqual([12n]);
+    w.stop();
+  });
+
+  test('onError is throttled: first error at once, then one summary per interval with a suppressed count', async () => {
+    vi.useFakeTimers();
+    const { chain, state } = fakeChain(10);
+    const { hub } = fakeHub();
+    const errors: Error[] = [];
+    const w = startBlockWatcher(chain, hub as never, { pollMs: POLL_MS, onError: (e) => errors.push(e as Error) });
+    await tick(0);
+    state.head = 12;
+    state.failReceiptsFor.add(11); // fails forever, but not for long enough to count as stuck
+    await tick(ERROR_LOG_INTERVAL_MS - 1_000);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.message).toBe('rpc error block 11');
+    await tick(3_000); // crosses the 5 s interval
+    expect(errors).toHaveLength(2);
+    const match = /\(\+(\d+) similar errors suppressed\)/.exec(errors[1]!.message);
+    expect(match).not.toBeNull();
+    expect(Number(match![1])).toBeGreaterThanOrEqual(2);
+    w.stop();
+  });
+
+  test('throwing callbacks never kill the loop', async () => {
+    vi.useFakeTimers();
+    const { chain, state } = fakeChain(10);
+    const { hub, ingested } = fakeHub();
+    const w = startBlockWatcher(chain, hub as never, {
+      pollMs: POLL_MS,
+      onError: () => {
+        throw new Error('logger broke');
+      },
+    });
+    await tick(0);
+    state.head = 11;
+    state.failReceiptsFor.add(11);
+    await tick(MAX_BACKOFF_MS);
+    state.failReceiptsFor.clear();
+    await tick(MAX_BACKOFF_MS);
+    expect(ingested.map((i) => i.block)).toEqual([10n, 11n]);
+    w.stop();
+  });
+
+  test('failed ticks back off exponentially up to MAX_BACKOFF_MS and a good tick resets to pollMs', async () => {
+    vi.useFakeTimers();
+    const { chain, state } = fakeChain(10);
+    const { hub } = fakeHub();
+    state.failHead = true;
+    const w = startBlockWatcher(chain, hub as never, { pollMs: POLL_MS, onError: () => undefined });
+    await tick(0);
+    expect(state.headCalls).toBe(1); // t=0, fails -> next in 300
+    await tick(299);
+    expect(state.headCalls).toBe(1);
+    await tick(1);
+    expect(state.headCalls).toBe(2); // t=300, fails -> next in 600
+    await tick(599);
+    expect(state.headCalls).toBe(2);
+    await tick(1);
+    expect(state.headCalls).toBe(3); // t=900, fails -> next in 1200
+    await tick(1_200); // t=2100, fails -> capped at 2000
+    expect(state.headCalls).toBe(4);
+    await tick(1_999);
+    expect(state.headCalls).toBe(4);
+    state.failHead = false;
+    await tick(1);
+    expect(state.headCalls).toBe(5); // success, delay back to pollMs
+    await tick(POLL_MS);
+    expect(state.headCalls).toBe(6);
+    await tick(POLL_MS);
+    expect(state.headCalls).toBe(7);
     w.stop();
   });
 
