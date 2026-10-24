@@ -36,12 +36,14 @@ Source is verified on MonadScan for every address above. The app runs on testnet
 Prerequisites: **Node 20+**, **pnpm** (`corepack enable`), **Foundry** (`curl -L https://foundry.paradigm.xyz | bash && foundryup`).
 
 ```bash
-git clone <this repo> nadgacha && cd nadgacha
+git clone <this repo> monicard && cd monicard
 pnpm install
 pnpm local
 ```
 
-`pnpm local` starts a local Anvil chain (chain id 10143, 1-second blocks), deploys both contracts, starts the game server with Anvil's default accounts (no `.env` needed), and starts the web app. Open the URL it prints. _TODO: confirm output and URL after N4._
+`pnpm local` starts a local Anvil chain (chain id 10143, 0.3-second blocks like Monad), deploys both contracts, starts the game server with Anvil's default dev accounts (no `.env`, no MON), and starts the web app. When it prints the banner, open **http://localhost:5173** (or the LAN address it prints, on your phone). Pull a card, then **Fight AI Agent**. Press Ctrl+C to stop everything.
+
+Ports 8545, 8080 and 5173 must be free. The local chain is throwaway: stopping it forgets all cards and duels.
 
 Tests:
 
@@ -80,7 +82,8 @@ Repo layout: `contracts/` (Foundry), `shared/` (game formulas + ABIs), `server/`
 | Event mode (B2B) | Organisers pay for a branded arena; the relay subsidises players' gas | Live (`/arena`) |
 | Paid packs | First pull free, then 0.05 MON per pack, odds shown and rolled onchain; funds go to the contract treasury (`paidPull` / `withdraw`) | Live |
 | Marketplace royalty | 5% on every resale (ERC-2981) | Live (in the contract) |
-| Season pass, cosmetics, staked duels | Depends on local regulation | Roadmap |
+| Staked duels | Players: both stake MON, the winner takes the pot minus a 5% rake to the treasury | Next |
+| Season pass & cosmetics | Players | Roadmap |
 
 Unit cost: one `attack` tx = 62,000 gas ≈ 0.006 MON at 102 gwei.
 
