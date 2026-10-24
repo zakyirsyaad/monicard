@@ -415,16 +415,19 @@ describe('server-like reads', () => {
     expect(chain.getAccount(CAROL)).toEqual({ nonce: 0, balance: '0', cardId: null, hasPulled: false });
   });
 
-  it('getCard: null for unknown ids, forging for 2 s after mint, then ready', () => {
+  it('getCard: null for unknown ids; bare forging, then full forging, then ready', () => {
     expect(chain.getCard('99')).toBeNull();
     const id = pull(ALICE, { element: 1, roll: 99 });
+    expect(chain.getCard(String(id))).toEqual({ status: 'forging' });
+
+    vi.advanceTimersByTime(1000);
     const forging = chain.getCard(String(id));
     expect(forging).toMatchObject({ image: '/mock/card.svg', attributes: [] });
     if (!forging || !('nadgacha' in forging)) throw new Error('expected full metadata');
     expect(forging.nadgacha.status).toBe('forging');
     expect(forging.nadgacha.nadmon).toEqual({ id: 'abyssnad', name: 'Abyssnad', stage: 3 });
 
-    vi.advanceTimersByTime(2000);
+    vi.advanceTimersByTime(1000);
     const ready = chain.getCard(String(id));
     if (!ready || !('nadgacha' in ready)) throw new Error('expected full metadata');
     expect(ready.nadgacha.status).toBe('ready');

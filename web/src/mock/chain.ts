@@ -46,7 +46,8 @@ const RELAY_LATENCY_MIN_MS = 180;
 const RELAY_LATENCY_SPAN_MS = 471; // 180..650 inclusive
 const AGENT_JOIN_DELAY_MS = 1500;
 const FRIEND_WAIT_MS = 6000;
-const FORGE_MS = 2000;
+const FORGE_BARE_MS = 1000; // bare `{status:'forging'}` until here
+const FORGE_MS = 2000; // full metadata with status 'forging' until here
 const STATS_WINDOW_MS = 5000;
 const LATENCY_SAMPLES = 50;
 const SETTLE_DELAY_BLOCKS = 2;
@@ -611,8 +612,10 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
   function getCard(id: string): CardMeta | null {
     const card = /^\d+$/.test(id) ? cards.get(Number(id)) : undefined;
     if (!card) return null;
+    const age = now() - card.mintedAtMs;
+    if (age < FORGE_BARE_MS) return { status: 'forging' };
     const nadmon = nadmonFor(card.element, card.rarity);
-    const ready = now() - card.mintedAtMs >= FORGE_MS;
+    const ready = age >= FORGE_MS;
     const text = ready
       ? cardText(nadmon.name, card.element, card.rarity, card.mintedAt)
       : { title: nadmon.name, lore: '' };
@@ -761,8 +764,3 @@ export function getMockChain(): MockChain {
   instance ??= createMockChain();
   return instance;
 }
-
-/** Lazy handle to the singleton, safe to import from modules in an import cycle. */
-export const mockChain: MockChain = new Proxy({} as MockChain, {
-  get: (_target, prop) => Reflect.get(getMockChain(), prop),
-});

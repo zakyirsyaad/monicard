@@ -15,4 +15,4 @@ export function createMockApi(chain: () => MockChain): Api {
   };
 }
 
-export const mockApi: Api = createMockApi(getMockChain);
+export const mockApi: Api = /* @__PURE__ */ createMockApi(getMockChain);
