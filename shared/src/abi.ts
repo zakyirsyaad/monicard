@@ -1809,14 +1809,21 @@ export const stakeVaultAbi = [
 export const battleAbi = [
   {
     "type": "constructor",
-    "inputs": [
+    "inputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "BOARD_SLOTS",
+    "inputs": [],
+    "outputs": [
       {
-        "name": "cards_",
-        "type": "address",
-        "internalType": "address"
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1833,13 +1840,13 @@ export const battleAbi = [
   },
   {
     "type": "function",
-    "name": "MAX_ROUNDS",
+    "name": "MAX_DRAWS",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "stateMutability": "view"
@@ -1859,12 +1866,30 @@ export const battleAbi = [
   },
   {
     "type": "function",
+    "name": "WIN_SCORE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "act",
     "inputs": [
       {
         "name": "id",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "handIdx",
+        "type": "uint8",
+        "internalType": "uint8"
       },
       {
         "name": "special",
@@ -1874,19 +1899,6 @@ export const battleAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "cards",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract INadCards"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1904,13 +1916,7 @@ export const battleAbi = [
   {
     "type": "function",
     "name": "createMatch",
-    "inputs": [
-      {
-        "name": "deck",
-        "type": "uint32[3]",
-        "internalType": "uint32[3]"
-      }
-    ],
+    "inputs": [],
     "outputs": [
       {
         "name": "id",
@@ -1919,40 +1925,6 @@ export const battleAbi = [
       }
     ],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "damageOf",
-    "inputs": [
-      {
-        "name": "atk",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "a",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "d",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "special",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -2010,7 +1982,7 @@ export const battleAbi = [
             "internalType": "enum CardBattle.Status"
           },
           {
-            "name": "round",
+            "name": "turn",
             "type": "uint8",
             "internalType": "uint8"
           },
@@ -2025,74 +1997,9 @@ export const battleAbi = [
             "internalType": "uint8"
           },
           {
-            "name": "turn",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
             "name": "lastMoveBlock",
             "type": "uint32",
             "internalType": "uint32"
-          },
-          {
-            "name": "deck1",
-            "type": "uint32[3]",
-            "internalType": "uint32[3]"
-          },
-          {
-            "name": "deck2",
-            "type": "uint32[3]",
-            "internalType": "uint32[3]"
-          },
-          {
-            "name": "card1",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "card2",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "hp1",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "maxHp1",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "atk1",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "el1",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "hp2",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "maxHp2",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "atk2",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "el2",
-            "type": "uint8",
-            "internalType": "uint8"
           },
           {
             "name": "special1",
@@ -2103,6 +2010,86 @@ export const battleAbi = [
             "name": "special2",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "drawn1",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "drawn2",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "placed1",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "placed2",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "el1",
+            "type": "uint8[10]",
+            "internalType": "uint8[10]"
+          },
+          {
+            "name": "el2",
+            "type": "uint8[10]",
+            "internalType": "uint8[10]"
+          },
+          {
+            "name": "rar1",
+            "type": "uint8[10]",
+            "internalType": "uint8[10]"
+          },
+          {
+            "name": "rar2",
+            "type": "uint8[10]",
+            "internalType": "uint8[10]"
+          },
+          {
+            "name": "atk1",
+            "type": "uint16[10]",
+            "internalType": "uint16[10]"
+          },
+          {
+            "name": "atk2",
+            "type": "uint16[10]",
+            "internalType": "uint16[10]"
+          },
+          {
+            "name": "maxHp1",
+            "type": "uint16[10]",
+            "internalType": "uint16[10]"
+          },
+          {
+            "name": "maxHp2",
+            "type": "uint16[10]",
+            "internalType": "uint16[10]"
+          },
+          {
+            "name": "hp1",
+            "type": "uint16[10]",
+            "internalType": "uint16[10]"
+          },
+          {
+            "name": "hp2",
+            "type": "uint16[10]",
+            "internalType": "uint16[10]"
+          },
+          {
+            "name": "board1",
+            "type": "uint8[3]",
+            "internalType": "uint8[3]"
+          },
+          {
+            "name": "board2",
+            "type": "uint8[3]",
+            "internalType": "uint8[3]"
           }
         ]
       }
@@ -2146,7 +2133,7 @@ export const battleAbi = [
             "internalType": "enum CardBattle.Status"
           },
           {
-            "name": "round",
+            "name": "turn",
             "type": "uint8",
             "internalType": "uint8"
           },
@@ -2161,74 +2148,9 @@ export const battleAbi = [
             "internalType": "uint8"
           },
           {
-            "name": "turn",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
             "name": "lastMoveBlock",
             "type": "uint32",
             "internalType": "uint32"
-          },
-          {
-            "name": "deck1",
-            "type": "uint32[3]",
-            "internalType": "uint32[3]"
-          },
-          {
-            "name": "deck2",
-            "type": "uint32[3]",
-            "internalType": "uint32[3]"
-          },
-          {
-            "name": "card1",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "card2",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "hp1",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "maxHp1",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "atk1",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "el1",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "hp2",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "maxHp2",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "atk2",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "el2",
-            "type": "uint8",
-            "internalType": "uint8"
           },
           {
             "name": "special1",
@@ -2239,6 +2161,86 @@ export const battleAbi = [
             "name": "special2",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "drawn1",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "drawn2",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "placed1",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "placed2",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "el1",
+            "type": "uint8[10]",
+            "internalType": "uint8[10]"
+          },
+          {
+            "name": "el2",
+            "type": "uint8[10]",
+            "internalType": "uint8[10]"
+          },
+          {
+            "name": "rar1",
+            "type": "uint8[10]",
+            "internalType": "uint8[10]"
+          },
+          {
+            "name": "rar2",
+            "type": "uint8[10]",
+            "internalType": "uint8[10]"
+          },
+          {
+            "name": "atk1",
+            "type": "uint16[10]",
+            "internalType": "uint16[10]"
+          },
+          {
+            "name": "atk2",
+            "type": "uint16[10]",
+            "internalType": "uint16[10]"
+          },
+          {
+            "name": "maxHp1",
+            "type": "uint16[10]",
+            "internalType": "uint16[10]"
+          },
+          {
+            "name": "maxHp2",
+            "type": "uint16[10]",
+            "internalType": "uint16[10]"
+          },
+          {
+            "name": "hp1",
+            "type": "uint16[10]",
+            "internalType": "uint16[10]"
+          },
+          {
+            "name": "hp2",
+            "type": "uint16[10]",
+            "internalType": "uint16[10]"
+          },
+          {
+            "name": "board1",
+            "type": "uint8[3]",
+            "internalType": "uint8[3]"
+          },
+          {
+            "name": "board2",
+            "type": "uint8[3]",
+            "internalType": "uint8[3]"
           }
         ]
       }
@@ -2253,11 +2255,6 @@ export const battleAbi = [
         "name": "id",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "deck",
-        "type": "uint32[3]",
-        "internalType": "uint32[3]"
       }
     ],
     "outputs": [],
@@ -2293,6 +2290,18 @@ export const battleAbi = [
         "internalType": "address"
       },
       {
+        "name": "drawnNo",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "placedNo",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
         "name": "special",
         "type": "bool",
         "indexed": false,
@@ -2305,16 +2314,10 @@ export const battleAbi = [
         "internalType": "uint256"
       },
       {
-        "name": "hpLeft",
-        "type": "uint16",
+        "name": "ko",
+        "type": "bool",
         "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "round",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -2377,67 +2380,31 @@ export const battleAbi = [
     "anonymous": false
   },
   {
-    "type": "event",
-    "name": "RoundEnded",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "round",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "winnerSide",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "score1",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "score2",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
     "type": "error",
     "name": "CannotJoinOwnMatch",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "DrawFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "DuplicateCard",
+    "name": "CardNotInHand",
     "inputs": [
       {
-        "name": "tokenId",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "handIdx",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ]
   },
   {
     "type": "error",
-    "name": "EmptyDeck",
-    "inputs": []
+    "name": "InvalidHandIndex",
+    "inputs": [
+      {
+        "name": "handIdx",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",
@@ -2462,14 +2429,8 @@ export const battleAbi = [
   },
   {
     "type": "error",
-    "name": "NotCardOwner",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
+    "name": "NoEmptySlot",
+    "inputs": []
   },
   {
     "type": "error",
@@ -2479,11 +2440,6 @@ export const battleAbi = [
   {
     "type": "error",
     "name": "NotYourTurn",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RoundLimitReached",
     "inputs": []
   },
   {
