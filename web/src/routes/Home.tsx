@@ -27,6 +27,30 @@ function InAppBrowserBanner() {
   );
 }
 
+/** Three Nadmon, one per element, stepped so the middle one leads. Line borders only (design system: no shadow or glow). */
+const HERO = [
+  { id: 'wavenad', name: 'Wavenad', border: 'border-element-water', weight: 'flex-1' },
+  { id: 'infernad', name: 'Infernad', border: 'border-element-fire', weight: 'flex-[1.45]' },
+  { id: 'voltnad', name: 'Voltnad', border: 'border-element-lightning', weight: 'flex-1' },
+] as const;
+
+function Hero() {
+  return (
+    <div className="flex items-end justify-center gap-2" role="group" aria-label="Fire, Water and Lightning Nadmon">
+      {HERO.map((n) => (
+        <img
+          key={n.id}
+          src={`/nadmon/${n.id}.svg`}
+          alt={n.name}
+          width={240}
+          height={150}
+          className={`${n.weight} ${n.border} block h-auto min-w-0 rounded-card border-2 bg-surface-sunken`}
+        />
+      ))}
+    </div>
+  );
+}
+
 function OddsTable() {
   return (
     <section className="flex flex-col gap-2">
@@ -111,6 +135,7 @@ export function Home() {
         <h1 className="display">Monicard</h1>
         <p className="body text-ink-muted">Real-time 1v1 card duels on Monad testnet.</p>
       </header>
+      <Hero />
       <OddsTable />
       <div className="mt-auto flex flex-col gap-3">
         {error && <Notice>{error}</Notice>}
