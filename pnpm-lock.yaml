@@ -184,7 +184,7 @@ importers:
         specifier: ^2.57.10
         version: 2.57.10(typescript@5.9.3)(zod@3.25.76)
       ws:
-        specifier: ^8
+        specifier: ^8.21.0
         version: 8.21.0
       zod:
         specifier: ^3.23.8

@@ -138,6 +138,13 @@ describe('createChain', () => {
     expect(chain.chainId).toBe(10143);
   });
 
+  test('disables the viem client cache so block polling is not delayed', () => {
+    const chain = createChain([RPC_A], 10143);
+
+    // viem defaults to 4000 ms, which makes getBlockNumber lag ~13 Monad blocks.
+    expect(chain.client.cacheTime).toBe(0);
+  });
+
   test('caches the gas price for ten seconds', async () => {
     let calls = 0;
     let price = 100_000_000_000n;

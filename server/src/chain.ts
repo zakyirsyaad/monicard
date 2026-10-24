@@ -81,6 +81,9 @@ function createClient(url: string, chainId: number): PublicClient {
   });
   return createPublicClient({
     chain,
+    // viem otherwise caches getBlockNumber for 4 s (~13 Monad blocks), which
+    // stalls the block watcher and poller.
+    cacheTime: 0,
     // Our failover owns retries; viem must not multiply them per URL.
     transport: http(url, { retryCount: 0, timeout: RPC_TIMEOUT_MS }),
   });
