@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { serve } from '@hono/node-server';
 import { nadCardsAbi } from '@nad/shared';
 import { privateKeyToAccount } from 'viem/accounts';
+import { loadBots } from '../scripts/setup-bots';
 import { createAccountReader } from './account';
 import { createChain } from './chain';
 import { composeApp, createThrottledLogger, describeError, type Running } from './compose';
@@ -17,10 +18,15 @@ const log = (line: string): void => console.log(line);
 async function buildComposed() {
   const chain = createChain(env.RPC_URLS, env.chainId);
   // Read once: the price is immutable in NadCards, and relay validation needs it at boot.
-  const pullPrice = await chain.call((client) =>
-    client.readContract({ address: env.cards, abi: nadCardsAbi, functionName: 'PULL_PRICE' }),
-  );
+  const [pullPrice, gasPriceWei] = await Promise.all([
+    chain.call((client) =>
+      client.readContract({ address: env.cards, abi: nadCardsAbi, functionName: 'PULL_PRICE' }),
+    ),
+    chain.getGasPrice(),
+  ]);
   const agentAccount = privateKeyToAccount(env.AGENT_KEY);
+  // One queue per key: /agent/challenge and the Card Battle runner share this agent nonce.
+  const agentQueue = createWalletQueue(agentAccount, chain);
 
   return composeApp({
     config: {
@@ -42,9 +48,12 @@ async function buildComposed() {
     chain,
     agent: agentAccount.address,
     pullPrice,
+    adminToken: env.ADMIN_TOKEN,
     masterQueue: createWalletQueue(privateKeyToAccount(env.MASTER_KEY), chain),
     operatorQueue: createWalletQueue(privateKeyToAccount(env.OPERATOR_KEY), chain),
-    agentQueue: env.battle === undefined ? undefined : createWalletQueue(agentAccount, chain),
+    agentQueue,
+    botKeys: loadBots(join(env.DATA_DIR, 'bots.json')),
+    gasPriceWei,
     accounts: createAccountReader({ chain, cards: env.cards }),
     webDist: join(env.ROOT, 'web', 'dist'),
     log,

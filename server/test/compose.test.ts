@@ -30,6 +30,17 @@ const GAS_LIMITS = {
   settle: 107_000,
 };
 
+/** The frozen `agent` payload for an empty store (no DATA_DIR/agent.json). */
+const DEFAULT_AGENT = {
+  type: 'agent',
+  level: 1,
+  threshold: 30,
+  finisher: true,
+  sim: { duels: 0, wins: 0 },
+  testnet: { duels: 0, wins: 0 },
+  lessons: [],
+};
+
 let root: string;
 let dataDir: string;
 let distWithIndex: string;
@@ -85,8 +96,12 @@ function makeDeps(overrides: Partial<ComposeDeps> = {}): ComposeDeps {
     },
     agent: AGENT,
     pullPrice: 50_000_000_000_000_000n,
+    adminToken: 'test-admin-token',
     masterQueue: fakeQueue('0x7777777777777777777777777777777777777777'),
     operatorQueue: fakeQueue('0x8888888888888888888888888888888888888888'),
+    agentQueue: fakeQueue(AGENT),
+    botKeys: [{ privateKey: `0x${'11'.repeat(32)}` as Hex, address: BOT, cardId: '1' }],
+    gasPriceWei: 1_000_000_000n,
     accounts,
     webDist: distWithIndex,
     readCard: async (id) => (id === 1 ? card1 : null),
@@ -172,12 +187,60 @@ describe('composeApp HTTP surface', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('image/svg+xml');
   });
+
+  test('POST /agent/challenge is mounted and rejects an empty body with a JSON 400', async () => {
+    const { app } = composeApp(makeDeps());
+    const res = await app.request(postJson('/agent/challenge', {}));
+    expect(res.status).toBe(400);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    expect(await res.json()).toEqual({ reason: 'bad_request' });
+  });
+});
+
+describe('composeApp admin routes', () => {
+  const ADMIN = { 'x-admin-token': 'test-admin-token' } as const;
+
+  test('GET /admin/wallets is refused without the admin token', async () => {
+    const { app } = composeApp(makeDeps());
+    const res = await app.request('/admin/wallets');
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ reason: 'unauthorized' });
+  });
+
+  test('GET /admin/wallets with the token lists master, operator, agent and every bot', async () => {
+    const client = {
+      getBalance: async () => 2_000_000_000_000_000_000n,
+      getBlockNumber: async () => 10n,
+    } as never;
+    const deps = makeDeps({
+      chain: {
+        chainId: 10143,
+        client,
+        call: async (fn) => fn(client),
+        getGasPrice: async () => 1_000_000_000n,
+      },
+    });
+    const { app } = composeApp(deps);
+    const res = await app.request('/admin/wallets', { headers: ADMIN });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { bots: { address: string; balance: string }[] };
+    expect(json.bots).toEqual([{ address: BOT, balance: '2' }]);
+  });
+
+  test('the token gate runs before routing: unknown /admin paths are 401, then a JSON 404', async () => {
+    const { app } = composeApp(makeDeps());
+    const denied = await app.request('/admin/none');
+    expect(denied.status).toBe(401);
+    const allowed = await app.request('/admin/none', { headers: ADMIN });
+    expect(allowed.status).toBe(404);
+    expect(await allowed.json()).toEqual({ reason: 'not_found' });
+  });
 });
 
 describe('composeApp SPA fallback', () => {
   test('unknown API paths return a JSON 404 even when the SPA exists', async () => {
     const { app } = composeApp(makeDeps());
-    for (const path of ['/relay/xyz', '/agent/none', '/admin/none', '/relay']) {
+    for (const path of ['/relay/xyz', '/agent/none', '/fund/xyz', '/relay']) {
       const res = await app.request(path);
       expect(res.status, path).toBe(404);
       expect(await res.json(), path).toEqual({ reason: 'not_found' });
@@ -250,15 +313,15 @@ describe('composeApp start', () => {
 
   const fakeServer = () => ({ close: vi.fn((cb?: (err?: Error) => void) => cb?.()) }) as unknown as Server;
 
-  test('getAgentMessage is null by default and is what the poller receives', () => {
+  test('getAgentMessage is the store-backed agent snapshot the poller receives', () => {
     const f = fakeLoops();
     const deps = makeDeps();
     const composed = composeApp(deps);
-    expect(composed.getAgentMessage()).toBeNull();
+    expect(composed.getAgentMessage()).toEqual(DEFAULT_AGENT);
     composed.start(fakeServer(), f.loops);
     const pd = f.getPollerDeps();
     expect(pd.getAgentMessage).toBe(composed.getAgentMessage);
-    expect(pd.getAgentMessage()).toBeNull();
+    expect(pd.getAgentMessage()).toEqual(DEFAULT_AGENT);
     expect(pd.chain).toBe(deps.chain);
     expect(pd.hub).toBe(composed.hub);
     expect(pd.stats).toBe(composed.stats);
@@ -316,6 +379,44 @@ describe('composeApp start', () => {
     const running = composeApp(makeDeps({ log })).start(fakeServer(), f.loops);
     await expect(running.stop()).resolves.toBeUndefined();
     expect(f.ws.close).toHaveBeenCalledOnce();
+  });
+
+  test('a merge-train store change is broadcast to websocket clients as the agent message', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nadgacha-agent-ws-'));
+    try {
+      writeFileSync(
+        join(dir, 'agent.train.json'),
+        JSON.stringify({
+          policy: { skillHpThreshold: 55, finisher: true },
+          lessons: [],
+          opponents: {},
+          sim: { duels: 5, wins: 3 },
+          testnet: { duels: 0, wins: 0 },
+        }),
+      );
+      const f = fakeLoops();
+      const base = makeDeps();
+      const composed = composeApp({ ...base, config: { ...base.config, dataDir: dir } });
+      composed.start(fakeServer(), f.loops);
+
+      const res = await composed.app.request('/admin/agent/merge-train', {
+        method: 'POST',
+        headers: { 'x-admin-token': 'test-admin-token' },
+      });
+      expect(res.status).toBe(200);
+      expect(f.ws.broadcast).toHaveBeenCalledWith({
+        type: 'agent',
+        level: 1,
+        threshold: 55,
+        finisher: true,
+        sim: { duels: 5, wins: 3 },
+        testnet: { duels: 0, wins: 0 },
+        lessons: [],
+      });
+      expect(composed.getAgentMessage()).toMatchObject({ threshold: 55, sim: { duels: 5, wins: 3 } });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('start logs which loops started and never the key material', () => {

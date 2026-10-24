@@ -2,13 +2,20 @@ import { existsSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { join } from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
-import type { Hex } from '@nad/shared';
+import { blitzArenaAbi, decodeDuels, type Hex } from '@nad/shared';
 import { Hono } from 'hono';
-import { parseEther } from 'viem';
+import { parseEther, toFunctionSelector } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import type { Bot } from '../scripts/setup-bots';
 import type { AccountReader } from './account';
+import { adminRoutes } from './adminRoutes';
 import { buildApp, isApiPath, readBots, spaFallback, type EventInfo } from './app';
 import { battleRoutes, createBattleLimiter } from './agent/battleRoutes';
 import { createBattleRunner } from './agent/battleRunner';
+import { createIpLimiter } from './agent/challenge';
+import { agentRoutes } from './agent/routes';
+import { createAgentRunner } from './agent/runner';
+import { agentMessage, createAgentStore } from './agent/store';
 import { startBlockWatcher, type BlockWatcher } from './blockWatcher';
 import { attachCardMinting, createCardService, createChainCardReader } from './cards/service';
 import { cardRoutes } from './cards/routes';
@@ -25,11 +32,12 @@ import {
   setFundEnabled,
 } from './fund';
 import { fundRoutes } from './fundRoutes';
-import { startPoller, type Poller, type PollerDeps } from './poller';
+import { setFeatured, startPoller, type Poller, type PollerDeps } from './poller';
 import { createReceiptHub, type ReceiptHub } from './receiptHub';
 import { relayRoutes } from './relayRoutes';
 import { attachStats, createStats, type Stats } from './stats';
-import type { WalletQueue } from './walletQueue';
+import { DEFAULT_BATCH_BLOCKS, createSwarm, estimateDuelCostWei, type SwarmBot } from './swarm';
+import { createWalletQueue, type WalletQueue } from './walletQueue';
 import { createWsHub, type AgentMsg, type WsHub } from './ws';
 
 /** Everything the server needs from env.ts, as plain values (never the keys). */
@@ -57,12 +65,21 @@ export type ComposeDeps = {
   chain: Chain;
   agent: Hex;
   pullPrice: bigint;
+  /** env ADMIN_TOKEN; an empty token disables every /admin route. */
+  adminToken: string;
   /** Pays /fund transfers. */
   masterQueue: WalletQueue;
   /** Sends settle txs from the poller. */
   operatorQueue: WalletQueue;
-  /** Signs Card Battle joins/actions for the AI Agent; omitted when battle is not deployed. */
+  /**
+   * Signs the AI Agent's duel and Card Battle txs (one queue per key). Also the key behind
+   * `/agent/challenge`; omitted only when the operator wants no server-side agent.
+   */
   agentQueue?: WalletQueue;
+  /** DATA_DIR/bots.json entries; keys stay here, only addresses reach the admin wallet list. */
+  botKeys: readonly Bot[];
+  /** Read once at boot; only feeds the swarm's per-duel budget. */
+  gasPriceWei: bigint;
   accounts: AccountReader;
   /** Built web client directory; may not exist (API-only mode). */
   webDist: string;
@@ -86,7 +103,7 @@ export type Composed = {
   app: Hono;
   hub: ReceiptHub;
   stats: Stats;
-  /** Seam: plug the agent store in here (the poller receives exactly this function). */
+  /** The live agent snapshot (DATA_DIR/agent.json); the poller sends exactly this on connect. */
   getAgentMessage: () => AgentMsg | null;
   /** Attaches ws, starts the watcher and the poller. Call once, after `serve()`. */
   start(server: Server, loops?: ComposeLoops): Running;
@@ -133,17 +150,6 @@ function mountSpa(app: Hono, webDist: string, log: (line: string) => void): void
   });
 }
 
-/**
- * Seams for later routes. Mount them here, before the SPA fallback, so their paths 404 as JSON:
- *   import { agentRoutes } from './agent/routes';   // /agent, server/src/agent/routes.ts
- *   import { adminRoutes } from './adminRoutes';    // /admin, server/src/adminRoutes.ts
- *   app.route('/', agentRoutes(...));
- *   app.route('/', adminRoutes(...));
- */
-function mountLaterRoutes(_app: Hono): void {
-  // intentionally empty
-}
-
 function closeServer(server: Server, log: (line: string) => void): Promise<void> {
   return new Promise((resolve) => {
     // Idle keep-alive sockets would otherwise hold close() open.
@@ -166,7 +172,10 @@ function attempt(label: string, log: (line: string) => void, fn: () => void): vo
 export function composeApp(deps: ComposeDeps): Composed {
   const { config, chain, log } = deps;
   const getBalance = (address: Hex): Promise<bigint> => chain.call((c) => c.getBalance({ address }));
-  const getAgentMessage = (): AgentMsg | null => null;
+  // DATA_DIR/agent.json is the single source of the `agent` message: the WS first snapshot,
+  // every post-duel broadcast and every merge-train broadcast read from this store.
+  const agentStore = createAgentStore(config.dataDir);
+  const getAgentMessage = (): AgentMsg | null => agentMessage(agentStore.get());
 
   // GasLimits carries optional stake/claim keys; the app deps and the relay take only defined numbers.
   const gasLimits: Record<string, number> = {};
@@ -233,8 +242,9 @@ export function composeApp(deps: ComposeDeps): Composed {
   attachCardMinting(hub, cardService, config.cards);
   app.route('/', cardRoutes(cardService));
 
-  // The poller only exists after start(); the battle runner reads it through this lazy slice.
+  // The poller and the ws hub only exist after start(); both runners read them through these refs.
   let pollerRef: Poller | null = null;
+  let wsRef: WsHub | null = null;
   const agentQueue = deps.agentQueue;
   if (config.battle !== undefined && agentQueue !== undefined) {
     const limit = (fn: string): number => gasLimits[fn] ?? 300_000;
@@ -252,11 +262,108 @@ export function composeApp(deps: ComposeDeps): Composed {
     app.route('/agent', battleRoutes({ runner, limiter: createBattleLimiter() }));
   }
 
-  mountLaterRoutes(app);
+  // The original AI Agent duel. Same `/agent` prefix as the Card Battle routes above, but
+  // `/challenge` and `/battle/*` never overlap, so both sub-apps stay mounted.
+  let reserveAgent: (p1: Hex | null) => void = () => undefined;
+  if (agentQueue !== undefined) {
+    const runner = createAgentRunner({
+      queue: agentQueue,
+      hub,
+      chain,
+      poller: {
+        getDuel: (id) => pollerRef?.getDuel(id),
+        createdBlock: (id) => pollerRef?.createdBlock(id),
+        latestBlock: () => pollerRef?.latestBlock() ?? 0,
+      },
+      store: agentStore,
+      broadcast: (msg) => wsRef?.broadcast(msg),
+      contracts: { cards: config.cards, arena: config.arena },
+      gasLimits: { joinDuel: config.gasLimits.joinDuel, attack: config.gasLimits.attack },
+      log,
+    });
+    reserveAgent = (p1) => runner.reserveFor(p1);
+    app.route('/agent', agentRoutes({ runner, limiter: createIpLimiter() }));
+  } else {
+    log('[server] no agent queue: /agent/challenge and /admin/agent/reserve are disabled');
+  }
+
+  // Demo swarm: one queue per bot key, so nonces never interleave across bots.
+  const botQueues = deps.botKeys.map((bot) => ({
+    bot,
+    queue: createWalletQueue(privateKeyToAccount(bot.privateKey), chain),
+  }));
+  const selectors = {
+    createDuel: toFunctionSelector('createDuel(uint256)'),
+    joinDuel: toFunctionSelector('joinDuel(uint256,uint256)'),
+    attack: toFunctionSelector('attack(uint256,uint16,bool)'),
+  };
+  /** Monad charges the gas LIMIT, so a batched attack must not inherit createDuel's. */
+  const gasFor = (data: Hex): number => {
+    const selector = data.slice(0, 10).toLowerCase();
+    if (selector === selectors.createDuel) return config.gasLimits.createDuel;
+    if (selector === selectors.joinDuel) return config.gasLimits.joinDuel;
+    return config.gasLimits.attack;
+  };
+  const bots: SwarmBot[] = botQueues
+    .filter(({ bot }) => bot.cardId !== null)
+    .map(({ bot, queue }) => ({
+      address: bot.address,
+      cardId: BigInt(bot.cardId as string),
+      send: async (data: Hex) => {
+        const hash = await queue.send({ to: config.arena, data, gas: BigInt(gasFor(data)) });
+        return hub.wait(hash, 15_000);
+      },
+    }));
+
+  const swarm = createSwarm({
+    bots,
+    readDuel: async (id) => {
+      const raw = await chain.call((c) =>
+        c.readContract({ address: config.arena, abi: blitzArenaAbi, functionName: 'getDuels', args: [id, 1n] }),
+      );
+      return decodeDuels(raw, id)[0] ?? null;
+    },
+    readBlock: async () => Number(await chain.call((c) => c.getBlockNumber())),
+    balanceOf: getBalance,
+    duelCostWei: () =>
+      estimateDuelCostWei({
+        gasLimits: config.gasLimits,
+        gasPrice: deps.gasPriceWei,
+        batchBlocks: DEFAULT_BATCH_BLOCKS,
+      }),
+    onError: (err, ctx) => log(`[swarm] pair ${ctx.pair} round ${ctx.round} failed: ${describeError(err)}`),
+  });
+
+  // The admin module takes (msg, err); one line per failure keeps the server log greppable.
+  const adminLog = (msg: string, err?: unknown): void => log(err === undefined ? msg : `${msg}: ${describeError(err)}`);
+  app.route(
+    '/admin',
+    adminRoutes({
+      token: deps.adminToken,
+      swarm,
+      setFundEnabled,
+      setFeatured,
+      reserveAgent,
+      agentStore,
+      trainPath: join(config.dataDir, 'agent.train.json'),
+      onAgentChanged: () => wsRef?.broadcast(agentMessage(agentStore.get())),
+      wallets: {
+        master: deps.masterQueue.address,
+        operator: deps.operatorQueue.address,
+        agent: deps.agent,
+        bots: deps.botKeys.map((bot) => bot.address),
+      },
+      balanceOf: getBalance,
+      log: adminLog,
+    }),
+  );
+
   mountSpa(app, deps.webDist, log);
 
   function start(server: Server, loops: ComposeLoops = DEFAULT_LOOPS): Running {
     const ws = loops.createWsHub(server);
+    // The runtimes and the admin merge-train broadcast through this ref once sockets exist.
+    wsRef = ws;
     const watcher = loops.startBlockWatcher(chain, hub, {
       // The watcher throttles its own reports and appends a suppressed count; a second throttle
       // here would drop those summaries, so pass the server log straight through.
@@ -278,13 +385,16 @@ export function composeApp(deps: ComposeDeps): Composed {
     pollerRef = poller;
     log(
       `[server] Monicard API on port ${config.port} (deployment ${config.deployment}, chain ${config.chainId}), ` +
-        `fund ${config.fundEnabled ? 'enabled' : 'disabled'}, loops: ws, watcher, poller`,
+        `fund ${config.fundEnabled ? 'enabled' : 'disabled'}, loops: ws, watcher, poller` +
+        `${agentQueue === undefined ? '' : ', agent'}, admin`,
     );
 
     return {
       async stop() {
         attempt('watcher', log, () => watcher.stop());
         attempt('poller', log, () => poller.stop());
+        // The swarm only stops starting new rounds; in-flight duels end on their own.
+        attempt('swarm', log, () => swarm.stop());
         attempt('ws', log, () => ws.close());
         await closeServer(server, log);
       },
