@@ -255,13 +255,24 @@ describe('composeApp start', () => {
     const deps = makeDeps({ log });
     const composed = composeApp(deps);
     const server = fakeServer();
-    composed.start(server, f.loops);
-    expect(f.loops.createWsHub).toHaveBeenCalledWith(server);
-    const [chainArg, hubArg, opts] = f.getWatcherArgs();
-    expect(chainArg).toBe(deps.chain);
-    expect(hubArg).toBe(composed.hub);
-    expect(() => opts.onError(new Error('rpc exploded'))).not.toThrow();
-    expect(log.mock.calls.flat().join(' ')).toContain('rpc exploded');
+    // Frozen clock: both errors below arrive at the same instant, so any outer throttle would drop one.
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    try {
+      composed.start(server, f.loops);
+      expect(f.loops.createWsHub).toHaveBeenCalledWith(server);
+      const [chainArg, hubArg, opts] = f.getWatcherArgs();
+      expect(chainArg).toBe(deps.chain);
+      expect(hubArg).toBe(composed.hub);
+      // The watcher throttles its own reports (and appends a suppressed count), so composeApp
+      // must not add a second throttle that would swallow them.
+      expect(() => opts.onError(new Error('rpc exploded'))).not.toThrow();
+      expect(() => opts.onError(new Error('block 7 stuck for over 10000 ms'))).not.toThrow();
+    } finally {
+      nowSpy.mockRestore();
+    }
+    const lines = log.mock.calls.flat();
+    expect(lines.filter((line) => line.includes('rpc exploded'))).toHaveLength(1);
+    expect(lines.filter((line) => line.includes('block 7 stuck'))).toHaveLength(1);
   });
 
   test('stop shuts down watcher, poller, ws and the http server', async () => {

@@ -106,7 +106,6 @@ export function createThrottledLogger(
 }
 
 const NOT_FOUND = { reason: 'not_found' } as const;
-const WATCHER_ERROR_LOG_MS = 10_000;
 
 /**
  * Static assets first, then a single notFound handler: API paths get a JSON 404, other GET paths
@@ -222,7 +221,9 @@ export function composeApp(deps: ComposeDeps): Composed {
   function start(server: Server, loops: ComposeLoops = DEFAULT_LOOPS): Running {
     const ws = loops.createWsHub(server);
     const watcher = loops.startBlockWatcher(chain, hub, {
-      onError: createThrottledLogger(log, WATCHER_ERROR_LOG_MS),
+      // The watcher throttles its own reports and appends a suppressed count; a second throttle
+      // here would drop those summaries, so pass the server log straight through.
+      onError: (error) => log(describeError(error)),
     });
     const poller = loops.startPoller({
       chain,
