@@ -1,11 +1,14 @@
-import { describe, expect, test } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type { NetworkInterfaceInfo } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, test } from 'vitest';
 import { mnemonicToAccount } from 'viem/accounts';
 import { ANVIL_MNEMONIC } from '../scripts/anvil';
 import {
   bannerLines,
   buildServerEnv,
   checkNodeVersion,
+  compareDeployment,
   deriveLocalKeys,
   lanAddress,
   shieldFromDotenv,
@@ -166,6 +169,8 @@ describe('bannerLines', () => {
     lan: '192.168.1.23',
     cards: '0xCards',
     arena: '0xArena',
+    battle: '0xBattle',
+    stakeVault: '0xVault',
     agentCardId: 7n,
   };
 
@@ -177,6 +182,10 @@ describe('bannerLines', () => {
     );
     expect(text).toContain('0xCards');
     expect(text).toContain('0xArena');
+    expect(text).toContain('CardBattle');
+    expect(text).toContain('0xBattle');
+    expect(text).toContain('StakeVault');
+    expect(text).toContain('0xVault');
     expect(text).toContain('Chain: local anvil (id 10143), 0.3 s blocks. No real MON is used.');
     expect(text).toContain('Ctrl+C');
   });
@@ -197,5 +206,49 @@ describe('stripOwnPrefix', () => {
   test('leaves other lines untouched', () => {
     expect(stripOwnPrefix('VITE ready', 'web')).toBe('VITE ready');
     expect(stripOwnPrefix('[web] x', 'server')).toBe('[web] x');
+  });
+});
+
+describe('compareDeployment', () => {
+  const expected = {
+    cards: '0xAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAa',
+    arena: '0xBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBb',
+    battle: '0xCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCc',
+    stakeVault: '0xDdDdDdDdDdDdDdDdDdDdDdDdDdDdDdDdDdDdDdDd',
+  };
+
+  test('accepts the same addresses regardless of letter case', () => {
+    expect(compareDeployment(expected, { ...expected, cards: expected.cards.toLowerCase() })).toEqual([]);
+  });
+
+  test('names every contract that drifted', () => {
+    expect(
+      compareDeployment(expected, {
+        ...expected,
+        battle: '0x0000000000000000000000000000000000000001',
+        stakeVault: '0x0000000000000000000000000000000000000002',
+      }),
+    ).toEqual(['battle', 'stakeVault']);
+  });
+});
+
+describe('deployments/anvil.json', () => {
+  const deployment = JSON.parse(
+    readFileSync(fileURLToPath(new URL('../../deployments/anvil.json', import.meta.url)), 'utf8'),
+  ) as {
+    battle?: string;
+    stakeVault?: string;
+    gasLimits?: Record<string, number>;
+  };
+
+  test('carries the Card Battle and StakeVault addresses', () => {
+    expect(deployment.battle).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    expect(deployment.stakeVault).toMatch(/^0x[0-9a-fA-F]{40}$/);
+  });
+
+  test('carries a gas limit for every battle and stake function', () => {
+    for (const fn of ['createMatch', 'joinMatch', 'act', 'claimTimeout', 'stake', 'claim']) {
+      expect(deployment.gasLimits?.[fn], fn).toBeGreaterThan(0);
+    }
   });
 });

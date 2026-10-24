@@ -12,7 +12,7 @@ import { connect, createServer } from 'node:net';
 import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { encodeFunctionData, createPublicClient, http, type Hex } from 'viem';
+import { encodeFunctionData, createPublicClient, http, parseEther, type Hex } from 'viem';
 import { mnemonicToAccount } from 'viem/accounts';
 import { nadCardsAbi } from '@nad/shared';
 import {
@@ -22,8 +22,10 @@ import {
   anvilDeployer,
   createAnvilSender,
   deployGame,
+  fundAccount,
   startAnvil,
   type AnvilHandle,
+  type DeployedGame,
 } from './anvil';
 
 const ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -137,6 +139,8 @@ export type BannerInput = {
   lan: string | null;
   cards: string;
   arena: string;
+  battle: string;
+  stakeVault: string;
   agentCardId: bigint;
 };
 
@@ -151,6 +155,8 @@ export function bannerLines(input: BannerInput): string[] {
     '',
     `  NadCards   ${input.cards}`,
     `  BlitzArena ${input.arena}`,
+    `  CardBattle ${input.battle}`,
+    `  StakeVault ${input.stakeVault}`,
     `  AI Agent card #${input.agentCardId}`,
     '',
     `Chain: local anvil (id ${ANVIL_CHAIN_ID}), ${BLOCK_TIME_SEC} s blocks. No real MON is used.`,
@@ -345,23 +351,43 @@ async function preflight(): Promise<string[]> {
 
 // ---------------------------------------------------------------- steps
 
-function expectedDeployment(): { cards: string; arena: string } {
+function expectedDeployment(): DeployedGame {
   const raw = readFileSync(join(ROOT, 'deployments', 'anvil.json'), 'utf8');
-  return JSON.parse(raw) as { cards: string; arena: string };
+  return JSON.parse(raw) as DeployedGame;
 }
 
-async function deployAndVerify(rpcUrl: string): Promise<{ cards: Hex; arena: Hex }> {
+const DEPLOYED_CONTRACTS = ['cards', 'arena', 'battle', 'stakeVault'] as const;
+type DeploymentAddresses = Record<(typeof DEPLOYED_CONTRACTS)[number], string>;
+
+/** Contract names whose address in `deployments/anvil.json` differs from the fresh deployment. */
+export function compareDeployment(
+  expected: DeploymentAddresses,
+  deployed: DeploymentAddresses,
+): (typeof DEPLOYED_CONTRACTS)[number][] {
+  return DEPLOYED_CONTRACTS.filter(
+    (name) => expected[name].toLowerCase() !== deployed[name].toLowerCase(),
+  );
+}
+
+async function deployAndVerify(rpcUrl: string): Promise<DeployedGame> {
   const noMineNeeded = async (): Promise<void> => undefined; // anvil mines by itself
   const deployed = await deployGame(rpcUrl, anvilDeployer(), noMineNeeded);
   const expected = expectedDeployment();
-  const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
-  if (!same(deployed.cards, expected.cards) || !same(deployed.arena, expected.arena)) {
+  const drifted = compareDeployment(expected, deployed);
+  if (drifted.length > 0) {
+    const detail = drifted.map((name) => `${name} ${deployed[name]}`).join(', ');
     throw new Error(
-      `Deployed addresses differ from deployments/anvil.json (cards ${deployed.cards}, arena ${deployed.arena}). ` +
+      `Deployed addresses differ from deployments/anvil.json (${detail}). ` +
         'Run this from a fresh anvil: stop any other anvil and start again.',
     );
   }
   return deployed;
+}
+
+/** The agent pays gas for Card Battle and the tap duel from anvil dev account 3. */
+async function fundAgent(rpcUrl: string): Promise<void> {
+  const account = mnemonicToAccount(ANVIL_MNEMONIC, { addressIndex: AGENT_INDEX });
+  await fundAccount(rpcUrl, account.address, parseEther('1000'));
 }
 
 /** The AI Agent needs a card before the first duel: it does a free pull. */
@@ -427,8 +453,9 @@ async function run(): Promise<void> {
   const anvil = await startAnvil(ANVIL_PORT, { blockTimeSec: BLOCK_TIME_SEC });
   trackAnvil(anvil);
 
-  log('Deploying NadCards and BlitzArena...');
-  const { cards, arena } = await deployAndVerify(anvil.rpcUrl);
+  log('Deploying NadCards, BlitzArena, CardBattle and StakeVault...');
+  const { cards, arena, battle, stakeVault } = await deployAndVerify(anvil.rpcUrl);
+  await fundAgent(anvil.rpcUrl);
   const agentCardId = await giveAgentACard(anvil.rpcUrl, cards);
   log(`AI Agent holds card #${agentCardId}.`);
 
@@ -437,7 +464,15 @@ async function run(): Promise<void> {
   log('Starting the web dev server...');
   await startWeb();
 
-  bannerLines({ webPort: WEB_PORT, lan: lanAddress(networkInterfaces()), cards, arena, agentCardId }).forEach(log);
+  bannerLines({
+    webPort: WEB_PORT,
+    lan: lanAddress(networkInterfaces()),
+    cards,
+    arena,
+    battle,
+    stakeVault,
+    agentCardId,
+  }).forEach(log);
 }
 
 function main(): void {

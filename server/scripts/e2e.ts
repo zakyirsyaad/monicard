@@ -1,7 +1,9 @@
-import { blitzArenaAbi, decodeDuels, nadCardsAbi, type DuelStatus, type Hex } from '@nad/shared';
-import { createPublicClient, encodeFunctionData, http, parseEther, type Account } from 'viem';
-import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import { battleAbi, blitzArenaAbi, decodeDuels, nadCardsAbi, type DuelStatus, type Hex } from '@nad/shared';
+import { createPublicClient, encodeFunctionData, http, parseEther, type Account, type PublicClient } from 'viem';
+import { generatePrivateKey, mnemonicToAccount, privateKeyToAccount } from 'viem/accounts';
+import { decodeMatches } from '../src/battle';
 import {
+  ANVIL_MNEMONIC,
   anvilChain,
   anvilDeployer,
   createAnvilSender,
@@ -21,6 +23,9 @@ const SETUP_MINE_MS = 20;
 const BATCH_BLOCKS = 3;
 const TAPS_PER_SEC = 7;
 const SKILL_HP_PERCENT = 30;
+/** Anvil dev account 3 is the AI Agent in `pnpm local`. */
+const AGENT_INDEX = 3;
+const NO_PLACEMENT = 255;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -49,8 +54,8 @@ async function run(): Promise<DuelStatus> {
   const anvil = await startAnvil(PORT);
   try {
     const client = createPublicClient({ chain: anvilChain, transport: http(anvil.rpcUrl), cacheTime: 0 });
-    const { cards, arena } = await deployGame(anvil.rpcUrl, anvilDeployer(), anvil.mine);
-    console.log(`deployed NadCards ${cards} BlitzArena ${arena}`);
+    const { cards, arena, battle, stakeVault } = await deployGame(anvil.rpcUrl, anvilDeployer(), anvil.mine);
+    console.log(`deployed NadCards ${cards} BlitzArena ${arena} CardBattle ${battle} StakeVault ${stakeVault}`);
 
     const burners: Account[] = [privateKeyToAccount(generatePrivateKey()), privateKeyToAccount(generatePrivateKey())];
     for (const b of burners) await fundAccount(anvil.rpcUrl, b.address, BURNER_FUNDS);
@@ -114,10 +119,65 @@ async function run(): Promise<DuelStatus> {
       final.hp1 < final.maxHp1 || final.hp2 < final.maxHp2,
       `at least one attack landed (hp ${final.hp1}/${final.maxHp1} vs ${final.hp2}/${final.maxHp2})`,
     );
+
+    await runCardBattle(anvil.rpcUrl, client, battle, burners[0]!, anvil.mine);
     return result.status;
   } finally {
     anvil.stop();
   }
+}
+
+/** One card battle against the AI Agent wallet: p1 opens, the agent joins and takes one turn. */
+async function runCardBattle(
+  rpcUrl: string,
+  client: PublicClient,
+  battle: Hex,
+  p1: Account,
+  mine: (blocks: number) => Promise<void>,
+): Promise<void> {
+  const p1Sender = await createAnvilSender(rpcUrl, p1, battle);
+  const created = await mineUntilSettled(
+    p1Sender.send(encodeFunctionData({ abi: battleAbi, functionName: 'createMatch' })),
+    mine,
+  );
+  assert(created.status === 'success', 'createMatch succeeded');
+
+  const id = await client.readContract({ address: battle, abi: battleAbi, functionName: 'matchCount' });
+  const readMatch = async () => {
+    const raw = await client.readContract({ address: battle, abi: battleAbi, functionName: 'getMatch', args: [id] });
+    return decodeMatches([raw], id)[0]!;
+  };
+  assert((await readMatch()).status === 'Open', 'match is open after createMatch');
+
+  const agent = mnemonicToAccount(ANVIL_MNEMONIC, { addressIndex: AGENT_INDEX });
+  await fundAccount(rpcUrl, agent.address, BURNER_FUNDS);
+  const agentSender = await createAnvilSender(rpcUrl, agent, battle);
+  const joined = await mineUntilSettled(
+    agentSender.send(encodeFunctionData({ abi: battleAbi, functionName: 'joinMatch', args: [id] })),
+    mine,
+  );
+  assert(joined.status === 'success', 'agent joinMatch succeeded');
+
+  let match = await readMatch();
+  assert(match.status === 'Active', 'match is active once the agent joins');
+  if (match.turn === 1) {
+    const passed = await mineUntilSettled(
+      p1Sender.send(encodeFunctionData({ abi: battleAbi, functionName: 'act', args: [id, NO_PLACEMENT, false] })),
+      mine,
+    );
+    assert(passed.status === 'success', 'p1 passed the turn');
+    match = await readMatch();
+  }
+  assert(match.turn === 2, 'the agent holds the turn');
+
+  const acted = await mineUntilSettled(
+    agentSender.send(encodeFunctionData({ abi: battleAbi, functionName: 'act', args: [id, 0, false] })),
+    mine,
+  );
+  assert(acted.status === 'success', 'agent act succeeded');
+  const after = await readMatch();
+  assert(after.turn === 1 || after.status !== 'Active', 'the agent finished its turn');
+  console.log(`Card Battle ${id}: agent joined and acted (turn ${after.turn}, status ${after.status})`);
 }
 
 async function verifyResults(

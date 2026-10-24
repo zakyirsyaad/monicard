@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { nadCardsBytecode, blitzArenaBytecode } from '@nad/shared/bytecode';
-import { blitzArenaAbi, nadCardsAbi, type Hex } from '@nad/shared';
+import { battleBytecode, blitzArenaBytecode, nadCardsBytecode, stakeVaultBytecode } from '@nad/shared/bytecode';
+import { battleAbi, blitzArenaAbi, nadCardsAbi, stakeVaultAbi, type Hex } from '@nad/shared';
 import {
   createPublicClient,
   createWalletClient,
@@ -142,12 +142,18 @@ export async function waitForReceipt(client: PublicClient, hash: Hex): Promise<T
   throw new Error(`receipt for ${hash} not found after ${RECEIPT_TIMEOUT_MS} ms`, { cause: lastNotFound });
 }
 
-/** Deploy NadCards + BlitzArena and wire the arena. Each tx is mined explicitly with `mine(1)`. */
+export type DeployedGame = { cards: Hex; arena: Hex; battle: Hex; stakeVault: Hex };
+
+/**
+ * Deploy NadCards, BlitzArena, CardBattle and StakeVault and wire the arena.
+ * Each tx is mined explicitly with `mine(1)`; the order fixes the throwaway anvil addresses recorded in
+ * `deployments/anvil.json` (engine nonce 0..3).
+ */
 export async function deployGame(
   rpcUrl: string,
   deployer: Account,
   mine: (blocks: number) => Promise<void>,
-): Promise<{ cards: Hex; arena: Hex }> {
+): Promise<DeployedGame> {
   const transport = http(rpcUrl);
   const publicClient = createPublicClient({ chain: anvilChain, transport, cacheTime: 0 });
   const wallet = createWalletClient({ chain: anvilChain, transport, account: deployer });
@@ -174,10 +180,22 @@ export async function deployGame(
       wallet.deployContract({ abi: blitzArenaAbi, bytecode: blitzArenaBytecode, args: [cards] }),
     ),
   );
+  const battle = addressOf(
+    'CardBattle',
+    await minedReceipt('CardBattle deploy', () =>
+      wallet.deployContract({ abi: battleAbi, bytecode: battleBytecode }),
+    ),
+  );
+  const stakeVault = addressOf(
+    'StakeVault',
+    await minedReceipt('StakeVault deploy', () =>
+      wallet.deployContract({ abi: stakeVaultAbi, bytecode: stakeVaultBytecode, args: [arena] }),
+    ),
+  );
   await minedReceipt('setArena', () =>
     wallet.writeContract({ address: cards, abi: nadCardsAbi, functionName: 'setArena', args: [arena] }),
   );
-  return { cards, arena };
+  return { cards, arena, battle, stakeVault };
 }
 
 export type AnvilSender = {
