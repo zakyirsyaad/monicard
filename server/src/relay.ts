@@ -14,6 +14,8 @@ export const RELAY_TIMEOUT_MS = 5_000;
 export const RATE_WINDOW_MS = 1_000;
 export const MAX_TX_PER_SENDER = 3;
 export const MAX_TX_PER_IP = 30;
+/** Extra sends of an already-counted hash allowed per window (client timeout-resend), then 429. */
+export const MAX_RESENDS_PER_WINDOW = 2;
 const MAX_ERROR_MESSAGE_CHARS = 200;
 /** Substrings (lowercase) of node errors meaning "the node already has / already mined this tx". */
 const KNOWN_TX_ERRORS = ['already known', 'nonce too low', 'replacement transaction underpriced'];
@@ -84,7 +86,7 @@ export type RateLimiter = {
 export function createRateLimiter(now: () => number = Date.now): RateLimiter {
   const senders = new Map<string, number[]>();
   const ips = new Map<string, number[]>();
-  const seen = new Map<string, number>();
+  const seen = new Map<string, { at: number; resends: number }>();
 
   function sweep(cutoff: number): void {
     for (const map of [senders, ips]) {
@@ -94,7 +96,7 @@ export function createRateLimiter(now: () => number = Date.now): RateLimiter {
         else if (live.length !== times.length) map.set(key, live);
       }
     }
-    for (const [hash, t] of seen) if (t <= cutoff) seen.delete(hash);
+    for (const [hash, entry] of seen) if (entry.at <= cutoff) seen.delete(hash);
   }
 
   const push = (map: Map<string, number[]>, key: string, t: number): void => {
@@ -106,12 +108,17 @@ export function createRateLimiter(now: () => number = Date.now): RateLimiter {
       const t = now();
       sweep(t - RATE_WINDOW_MS);
       const key = `${sender.toLowerCase()}`;
-      if (seen.has(hash.toLowerCase())) return true; // resend of a counted tx
+      const known = seen.get(hash.toLowerCase());
+      if (known) {
+        if (known.resends >= MAX_RESENDS_PER_WINDOW) return false;
+        known.resends += 1; // resend of a counted tx: free, but bounded
+        return true;
+      }
       if ((senders.get(key)?.length ?? 0) >= MAX_TX_PER_SENDER) return false;
       if ((ips.get(ip)?.length ?? 0) >= MAX_TX_PER_IP) return false;
       push(senders, key, t);
       push(ips, ip, t);
-      seen.set(hash.toLowerCase(), t);
+      seen.set(hash.toLowerCase(), { at: t, resends: 0 });
       return true;
     },
     size: () => senders.size + ips.size + seen.size,
@@ -173,15 +180,54 @@ function decodeEvents(receipt: TxReceipt, cfg: RelayConfig): { tokenId?: string;
   };
 }
 
-/** Sends the raw tx; resolves the receipt if the node reports it as already known/mined, else null. */
-async function sendOrFindReceipt(deps: RelayDeps, raw: Hex, hash: Hex): Promise<TxReceipt | null> {
+const TRANSPORT_ERROR_NAMES = ['HttpRequestError', 'TimeoutError', 'WebSocketRequestError'];
+const TRANSPORT_ERROR_TEXT = ['timeout', 'took too long', 'fetch failed'];
+
+/** The send may or may not have reached the node (network trouble), so the tx may still get mined. */
+function isTransportError(err: unknown): boolean {
+  const names = [(err as { name?: string })?.name, (err as { cause?: { name?: string } })?.cause?.name];
+  if (names.some((n) => n !== undefined && TRANSPORT_ERROR_NAMES.includes(n))) return true;
+  const text = errorText(err);
+  return TRANSPORT_ERROR_TEXT.some((k) => text.includes(k));
+}
+
+const isKnownTxError = (err: unknown): boolean => {
+  const text = errorText(err);
+  return KNOWN_TX_ERRORS.some((k) => text.includes(k));
+};
+
+type Outcome =
+  | { kind: 'receipt'; receipt: TxReceipt }
+  | { kind: 'timeout' }
+  | { kind: 'send-error'; err: unknown };
+
+const NEVER = new Promise<Outcome>(() => undefined);
+
+const lookupReceipt = (deps: RelayDeps, hash: Hex): Promise<TxReceipt | null> =>
+  deps.chain.call((c) => c.getTransactionReceipt({ hash })).catch(() => null);
+
+/** Receipt already ingested by the watcher, else one direct lookup, else null. */
+async function findReceipt(deps: RelayDeps, hash: Hex): Promise<TxReceipt | null> {
+  const fromHub = await deps.hub.wait(hash, 0).catch(() => null);
+  return fromHub ?? lookupReceipt(deps, hash);
+}
+
+/**
+ * The send path. Resolves with an outcome only when it has something decisive (a receipt
+ * or a definitive send error); otherwise stays pending so the hub waiter decides.
+ */
+async function sendPath(deps: RelayDeps, raw: Hex, hash: Hex): Promise<Outcome> {
   try {
     await deps.chain.call((c) => c.sendRawTransaction({ serializedTransaction: raw }));
-    return null;
+    return NEVER;
   } catch (err) {
-    const text = errorText(err);
-    if (!KNOWN_TX_ERRORS.some((k) => text.includes(k))) throw err;
-    return deps.chain.call((c) => c.getTransactionReceipt({ hash })).catch(() => null);
+    if (isTransportError(err)) return NEVER;
+    if (isKnownTxError(err)) {
+      const receipt = await lookupReceipt(deps, hash);
+      return receipt ? { kind: 'receipt', receipt } : NEVER;
+    }
+    const receipt = await findReceipt(deps, hash);
+    return receipt ? { kind: 'receipt', receipt } : { kind: 'send-error', err };
   }
 }
 
@@ -205,16 +251,17 @@ export async function handleRelay(body: unknown, ip: string, deps: RelayDeps): P
   if (balanceError) return balanceError;
 
   // The waiter MUST exist before the send: with ~300 ms blocks the receipt can be ingested
-  // while sendRawTransaction is still in flight.
+  // while sendRawTransaction is still in flight. The request then ends with whichever comes
+  // first: the hub receipt or a decisive send result, bounded by the waiter's timeout.
   const waiting = deps.hub.wait(checked.hash, deps.timeoutMs ?? RELAY_TIMEOUT_MS);
-  waiting.catch(() => undefined); // an early return below must not leave an unhandled rejection
-  let receipt: TxReceipt;
-  try {
-    receipt = (await sendOrFindReceipt(deps, raw, checked.hash)) ?? (await waiting);
-  } catch (err) {
-    if ((err as Error).message === 'timeout') return fail(504, { reason: 'timeout', hash: checked.hash });
-    return fail(400, { reason: 'send', message: shortMessage(err) });
-  }
+  const fromHub: Promise<Outcome> = waiting.then(
+    (receipt): Outcome => ({ kind: 'receipt', receipt }),
+    (): Outcome => ({ kind: 'timeout' }),
+  );
+  const outcome = await Promise.race([fromHub, sendPath(deps, raw, checked.hash)]);
+  if (outcome.kind === 'timeout') return fail(504, { reason: 'timeout', hash: checked.hash });
+  if (outcome.kind === 'send-error') return fail(400, { reason: 'send', message: shortMessage(outcome.err) });
+  const { receipt } = outcome;
   const latencyMs = now() - startedAt;
   deps.stats.recordLatency(latencyMs);
   return fail(200, {
@@ -226,12 +273,9 @@ export async function handleRelay(body: unknown, ip: string, deps: RelayDeps): P
   });
 }
 
+/** Fails open: if the balance source is down the node itself still rejects underfunded txs. */
 async function checkBalance(deps: RelayDeps, sender: Hex, tx: ValidTx): Promise<RelayResult | null> {
-  let balance: bigint;
-  try {
-    balance = await deps.getBalance(sender);
-  } catch {
-    return fail(400, { reason: 'send', message: 'balance lookup failed' });
-  }
+  const balance = await deps.getBalance(sender).catch(() => null);
+  if (balance === null) return null;
   return tx.gas * tx.maxFeePerGas + tx.value > balance ? fail(400, { reason: 'balance' }) : null;
 }

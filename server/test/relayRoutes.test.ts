@@ -71,7 +71,7 @@ describe('relayRoutes', () => {
     }
   });
 
-  test('rate limits per client IP taken from the first x-forwarded-for entry', async () => {
+  test('rate limits per client IP: x-real-ip wins, a forged first x-forwarded-for entry is ignored', async () => {
     const app = makeApp();
     // 30 txs/s per IP: use 31 distinct senders so only the IP limit can trigger
     const statuses: number[] = [];
@@ -82,15 +82,18 @@ describe('relayRoutes', () => {
         data: encodeFunctionData({ abi: blitzArenaAbi, functionName: 'attack', args: [1n, 3, false] }),
         gas: 70_000n, maxFeePerGas: 200_000_000_000n, maxPriorityFeePerGas: 2_000_000_000n,
       });
-      const res = await post(app, JSON.stringify({ rawTx: raw }), { 'x-forwarded-for': '5.6.7.8, 10.0.0.1' });
+      const res = await post(app, JSON.stringify({ rawTx: raw }), { 'x-real-ip': '5.6.7.8', 'x-forwarded-for': `6.6.6.${i}, 5.6.7.8` });
       statuses.push(res.status);
     }
     expect(statuses.slice(0, 30).every((s) => s === 200)).toBe(true);
     expect(statuses[30]).toBe(429);
-    // a different forwarded IP (first entry) is a different bucket
-    const other = await post(app, JSON.stringify({ rawTx: await signAttack(5) }), { 'x-forwarded-for': '9.9.9.9' });
+    // a different x-real-ip is a different bucket
+    const other = await post(app, JSON.stringify({ rawTx: await signAttack(5) }), { 'x-real-ip': '9.9.9.9' });
     expect(other.status).toBe(200);
-    // and without the header everything falls into 'unknown'
+    // without x-real-ip the LAST x-forwarded-for entry (the nginx-appended peer) is the key
+    const viaXff = await post(app, JSON.stringify({ rawTx: await signAttack(7) }), { 'x-forwarded-for': '1.2.3.4, 9.9.9.9' });
+    expect(viaXff.status).toBe(200);
+    // and without any header everything falls into 'unknown'
     const unknown = await post(app, JSON.stringify({ rawTx: await signAttack(6) }));
     expect(unknown.status).toBe(200);
   });

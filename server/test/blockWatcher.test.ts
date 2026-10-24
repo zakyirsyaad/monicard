@@ -1,6 +1,6 @@
 import type { Hex, PublicClient } from 'viem';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { startBlockWatcher } from '../src/blockWatcher';
+import { RECEIPT_CONCURRENCY, STUCK_BLOCK_MS, startBlockWatcher } from '../src/blockWatcher';
 import type { ChainLike } from '../src/chainTypes';
 
 const POLL_MS = 150;
@@ -25,7 +25,7 @@ const rawReceipt = (block: number, i: number) => ({
 });
 
 function fakeChain(startHead: number) {
-  const state = { head: startHead, failReceiptsFor: new Set<number>(), failHead: false, headCalls: 0, receiptCalls: [] as number[] };
+  const state = { head: startHead, failReceiptsFor: new Set<number>(), failHead: false, headCalls: 0, receiptCalls: [] as number[], latency: new Map<number, number>(), inFlight: 0, maxInFlight: 0 };
   const client = {
     request: async ({ method, params }: { method: string; params?: unknown[] }) => {
       if (method === 'eth_blockNumber') {
@@ -36,8 +36,16 @@ function fakeChain(startHead: number) {
       if (method === 'eth_getBlockReceipts') {
         const n = Number(BigInt(params![0] as string));
         state.receiptCalls.push(n);
-        if (state.failReceiptsFor.has(n)) throw new Error(`rpc error block ${n}`);
-        return [rawReceipt(n, 1)];
+        state.inFlight += 1;
+        state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
+        try {
+          const ms = state.latency.get(n);
+          if (ms) await new Promise((r) => setTimeout(r, ms));
+          if (state.failReceiptsFor.has(n)) throw new Error(`rpc error block ${n}`);
+          return [rawReceipt(n, 1)];
+        } finally {
+          state.inFlight -= 1;
+        }
       }
       throw new Error(`unexpected ${method}`);
     },
@@ -154,6 +162,98 @@ describe('block watcher', () => {
     expect(state.headCalls - headCallsBefore).toBeGreaterThanOrEqual(3); // 120 blocks / 50 per tick
     expect(w.latestBlock()).toBe(130n);
     expect(ingested.map((i) => i.block)).toEqual(Array.from({ length: 121 }, (_, i) => BigInt(10 + i)));
+    w.stop();
+  });
+
+  test('fetches with bounded concurrency (RECEIPT_CONCURRENCY in flight at most)', async () => {
+    vi.useFakeTimers();
+    const { chain, state } = fakeChain(10);
+    const { hub, ingested } = fakeHub();
+    const w = startBlockWatcher(chain, hub as never, { pollMs: POLL_MS });
+    await tick(0);
+    state.head = 40;
+    for (let n = 11; n <= 40; n++) state.latency.set(n, 20);
+    await tick(POLL_MS);
+    for (let i = 0; i < 40; i++) await tick(10);
+    expect(RECEIPT_CONCURRENCY).toBe(6);
+    expect(state.maxInFlight).toBe(RECEIPT_CONCURRENCY);
+    expect(ingested.map((i) => i.block)).toEqual(Array.from({ length: 31 }, (_, i) => BigInt(10 + i)));
+    w.stop();
+  });
+
+  test('ingests in ascending order even when responses arrive out of order', async () => {
+    vi.useFakeTimers();
+    const { chain, state } = fakeChain(10);
+    const { hub, ingested } = fakeHub();
+    const w = startBlockWatcher(chain, hub as never, { pollMs: POLL_MS });
+    await tick(0);
+    state.head = 16;
+    [11, 12, 13, 14, 15, 16].forEach((n, i) => state.latency.set(n, 100 - i * 15)); // 11 slowest, 16 fastest
+    await tick(POLL_MS);
+    await tick(200);
+    expect(ingested.map((i) => i.block)).toEqual([10n, 11n, 12n, 13n, 14n, 15n, 16n]);
+    w.stop();
+  });
+
+  test('a failure inside a chunk ingests the successful prefix and retries from the failed block', async () => {
+    vi.useFakeTimers();
+    const { chain, state } = fakeChain(10);
+    const { hub, ingested } = fakeHub();
+    const errors: unknown[] = [];
+    const w = startBlockWatcher(chain, hub as never, { pollMs: POLL_MS, onError: (e) => errors.push(e) });
+    await tick(0);
+    state.head = 16;
+    state.failReceiptsFor.add(13);
+    await tick(POLL_MS);
+    expect(ingested.map((i) => i.block)).toEqual([10n, 11n, 12n]); // 14..16 fetched but not ingested past the gap
+    expect(w.latestBlock()).toBe(12n);
+    expect(errors).toHaveLength(1);
+    state.failReceiptsFor.clear();
+    await tick(POLL_MS);
+    expect(ingested.map((i) => i.block)).toEqual([10n, 11n, 12n, 13n, 14n, 15n, 16n]);
+    w.stop();
+  });
+
+  test('a block failing for over STUCK_BLOCK_MS is reported once and skipped to head', async () => {
+    vi.useFakeTimers();
+    const { chain, state } = fakeChain(10);
+    const { hub, ingested } = fakeHub();
+    const errors: Error[] = [];
+    const w = startBlockWatcher(chain, hub as never, { pollMs: POLL_MS, onError: (e) => errors.push(e as Error) });
+    await tick(0);
+    state.head = 14;
+    state.failReceiptsFor.add(12);
+    await tick(STUCK_BLOCK_MS - 500);
+    expect(w.latestBlock()).toBe(11n);
+    expect(errors.some((e) => /stuck/.test(e.message))).toBe(false);
+    await tick(1_000);
+    const stuck = errors.filter((e) => /stuck/.test(e.message));
+    expect(stuck).toHaveLength(1);
+    expect(stuck[0]!.message).toContain('12');
+    expect(w.latestBlock()).toBe(14n);
+    expect(w.lag()).toBe(0n);
+    state.head = 15;
+    await tick(POLL_MS);
+    expect(ingested.map((i) => i.block)).toEqual([10n, 11n, 15n]);
+    expect(errors.filter((e) => /stuck/.test(e.message))).toHaveLength(1);
+    w.stop();
+  });
+
+  test('lag() is head minus the last handled block', async () => {
+    vi.useFakeTimers();
+    const { chain, state } = fakeChain(10);
+    const { hub } = fakeHub();
+    const w = startBlockWatcher(chain, hub as never, { pollMs: POLL_MS, onError: () => undefined });
+    expect(w.lag()).toBe(0n);
+    await tick(0);
+    expect(w.lag()).toBe(0n);
+    state.head = 14;
+    state.failReceiptsFor.add(12);
+    await tick(POLL_MS);
+    expect(w.lag()).toBe(3n); // handled 11, head 14
+    state.failReceiptsFor.clear();
+    await tick(POLL_MS);
+    expect(w.lag()).toBe(0n);
     w.stop();
   });
 

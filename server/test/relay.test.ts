@@ -65,7 +65,7 @@ function receiptFor(hash: Hex, over: { status?: 'success' | 'reverted'; logs?: F
 
 type FakeChainOpts = {
   /** What a send does; default: ingest a success receipt into the hub synchronously and return the hash. */
-  onSend?: (raw: Hex, hub: ReceiptHub) => Hex | void;
+  onSend?: (raw: Hex, hub: ReceiptHub) => Hex | void | Promise<Hex>;
   chainReceipts?: Map<Hex, TransactionReceipt>;
 };
 
@@ -315,6 +315,62 @@ describe('handleRelay', () => {
     expect(res).toEqual({ status: 504, json: { reason: 'timeout', hash: keccak256(raw) } });
   });
 
+  test('a send that never resolves does not block a receipt ingested meanwhile', async () => {
+    const raw = await signTx();
+    const { deps, hub } = setup({ onSend: () => new Promise<Hex>(() => undefined) }, { timeoutMs: 2_000 });
+    setTimeout(() => hub.ingest(5n, [receiptFor(keccak256(raw))]), 50);
+    const started = Date.now();
+    const res = await handleRelay({ rawTx: raw }, 'ip', deps);
+    expect(res.status).toBe(200);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test('a hung send with no receipt is still bounded by the relay timeout (504)', async () => {
+    const raw = await signTx();
+    const { deps } = setup({ onSend: () => new Promise<Hex>(() => undefined) }, { timeoutMs: 40 });
+    expect(await handleRelay({ rawTx: raw }, 'ip', deps)).toEqual({ status: 504, json: { reason: 'timeout', hash: keccak256(raw) } });
+  });
+
+  test.each([
+    ['viem TimeoutError', Object.assign(new Error('The request took too long to respond.'), { name: 'TimeoutError' })],
+    ['viem HttpRequestError', Object.assign(new Error('HTTP request failed.'), { name: 'HttpRequestError' })],
+    ['fetch failed', new Error('fetch failed')],
+  ])('a transport error (%s) keeps waiting and succeeds when the receipt is ingested', async (_name, err) => {
+    const raw = await signTx();
+    const { deps, hub } = setup(
+      { onSend: () => { throw err; } },
+      { timeoutMs: 2_000 },
+    );
+    setTimeout(() => hub.ingest(5n, [receiptFor(keccak256(raw))]), 30);
+    expect((await handleRelay({ rawTx: raw }, 'ip', deps)).status).toBe(200);
+  });
+
+  test('an unknown send error with the receipt already in the hub returns success', async () => {
+    const { deps } = setup({
+      onSend: (raw, hub) => {
+        hub.ingest(5n, [receiptFor(keccak256(raw))]);
+        throw new Error('something odd happened');
+      },
+    });
+    // the waiter also resolves from that ingest; either path must give 200, never 400
+    expect((await handleRelay({ rawTx: await signTx() }, 'ip', deps)).status).toBe(200);
+  });
+
+  test('an unknown send error with the receipt only on chain returns success via one direct lookup', async () => {
+    const raw = await signTx();
+    const hash = keccak256(raw);
+    const { deps } = setup({
+      chainReceipts: new Map([[hash, receiptFor(hash)]]),
+      onSend: () => { throw new Error('something odd happened'); },
+    });
+    expect(await handleRelay({ rawTx: raw }, 'ip', deps)).toMatchObject({ status: 200, json: { hash, status: 'success' } });
+  });
+
+  test('an unknown send error and no receipt anywhere returns 400 send', async () => {
+    const { deps } = setup({ onSend: () => { throw new Error('something odd happened'); } });
+    expect(await handleRelay({ rawTx: await signTx() }, 'ip', deps)).toEqual({ status: 400, json: { reason: 'send', message: 'something odd happened' } });
+  });
+
   test('other send errors become 400 send with a short message only', async () => {
     const err = Object.assign(new Error('insufficient funds for gas\nVersion: viem@2.0\nstack...'), { shortMessage: 'insufficient funds for gas * price + value' });
     const { deps } = setup({
@@ -356,10 +412,11 @@ describe('handleRelay', () => {
     expect(await handleRelay({ rawTx: raw }, 'ip', deps)).toEqual({ status: 400, json: { reason: 'balance' } });
   });
 
-  test('a failing balance lookup returns 400 send instead of throwing', async () => {
-    const { deps } = setup({}, { getBalance: async () => { throw new Error('cache down'); } });
+  test('a failing balance lookup fails open and the relay proceeds', async () => {
+    const { deps, sent } = setup({}, { getBalance: async () => { throw new Error('cache down'); } });
     const res = await handleRelay({ rawTx: await signTx() }, 'ip', deps);
-    expect(res).toEqual({ status: 400, json: { reason: 'send', message: 'balance lookup failed' } });
+    expect(res.status).toBe(200);
+    expect(sent).toHaveLength(1);
   });
 
   test('429 after 3 txs per second from one sender, recovers after the window', async () => {
@@ -372,11 +429,16 @@ describe('handleRelay', () => {
     expect((await handleRelay({ rawTx: await signTx({ nonce: 3 }) }, 'ip', deps)).status).toBe(200);
   });
 
-  test('a resend of the same hash is not double counted', async () => {
-    const { deps } = setup();
+  test('a resend of the same hash is not double counted, but only 2 extra resends are free', async () => {
+    const { deps, clock } = setup();
     const raw = await signTx();
-    for (let i = 0; i < 6; i++) expect((await handleRelay({ rawTx: raw }, 'ip', deps)).status).toBe(200);
+    for (let i = 0; i < 3; i++) expect((await handleRelay({ rawTx: raw }, 'ip', deps)).status).toBe(200); // original + 2 resends
+    expect(await handleRelay({ rawTx: raw }, 'ip', deps)).toEqual({ status: 429, json: { reason: 'rate' } });
+    // the original only consumed one sender slot
     expect((await handleRelay({ rawTx: await signTx({ nonce: 1 }) }, 'ip', deps)).status).toBe(200);
+    expect((await handleRelay({ rawTx: await signTx({ nonce: 2 }) }, 'ip', deps)).status).toBe(200);
+    clock.t += 1_001;
+    expect((await handleRelay({ rawTx: raw }, 'ip', deps)).status).toBe(200);
   });
 
   test('requests rejected by validation do not consume rate budget', async () => {
