@@ -84,8 +84,21 @@ export function createWalletQueue(
   const readNonce = (): Promise<number> =>
     chain.call((client) => client.getTransactionCount({ address, blockTag: 'pending' }));
 
-  async function resyncNonce(): Promise<void> {
+  async function doResync(): Promise<void> {
     nonce = await readNonce();
+  }
+
+  /**
+   * Runs an operation after every previously queued send/resync. Rejections do not
+   * poison the chain: each caller still sees its own result.
+   */
+  function enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const run = tail.then(operation);
+    tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   async function ensureNonce(): Promise<number> {
@@ -142,7 +155,9 @@ export function createWalletQueue(
         return hash;
       } catch (error) {
         await markTxBlock();
-        await resyncNonce();
+        // Internal resync only: the public resyncNonce() would deadlock here,
+        // because it queues behind the send that is already running.
+        await doResync();
         if (attempt === 0 && NONCE_ERROR.test(errorMessage(error))) continue;
         throw error;
       }
@@ -151,13 +166,13 @@ export function createWalletQueue(
   }
 
   function send(req: SendRequest): Promise<Hex> {
-    const run = tail.then(() => sendOnce(req));
-    // Keep the chain alive after a rejection; callers see their own failure.
-    tail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+    return enqueue(() => sendOnce(req));
+  }
+
+  function resyncNonce(): Promise<void> {
+    // Never read the pending count while a send is in flight: the count may
+    // already include that tx, and the tx can still be rejected afterwards.
+    return enqueue(doResync);
   }
 
   return { address, send, resyncNonce };

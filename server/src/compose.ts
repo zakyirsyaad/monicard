@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { join } from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
@@ -6,7 +6,7 @@ import type { Hex } from '@nad/shared';
 import { Hono } from 'hono';
 import { parseEther } from 'viem';
 import type { AccountReader } from './account';
-import { buildApp, isApiPath, readBots, type EventInfo } from './app';
+import { buildApp, isApiPath, readBots, spaFallback, type EventInfo } from './app';
 import { startBlockWatcher, type BlockWatcher } from './blockWatcher';
 import { attachCardMinting, createCardService, createChainCardReader } from './cards/service';
 import { cardRoutes } from './cards/routes';
@@ -110,19 +110,19 @@ const WATCHER_ERROR_LOG_MS = 10_000;
 
 /**
  * Static assets first, then a single notFound handler: API paths get a JSON 404, other GET paths
- * get the SPA index when `web/dist` exists, everything else a plain 404.
+ * get the SPA index (read per request, so a fresh build is not stale), everything else a plain 404.
  * Must run AFTER every API route is mounted.
  */
 function mountSpa(app: Hono, webDist: string, log: (line: string) => void): void {
   const indexPath = join(webDist, 'index.html');
-  const indexHtml = existsSync(indexPath) ? readFileSync(indexPath, 'utf8') : null;
-  if (indexHtml === null) log(`[server] ${indexPath} not found, serving API only`);
+  if (!existsSync(indexPath)) log(`[server] ${indexPath} not found, serving API only`);
   else app.use('*', serveStatic({ root: webDist }));
 
+  const fallback = spaFallback(indexPath);
   app.notFound((c) => {
     if (isApiPath(c.req.path)) return c.json(NOT_FOUND, 404);
-    if (indexHtml !== null && c.req.method === 'GET') return c.html(indexHtml);
-    return c.text('404 Not Found', 404);
+    if (c.req.method !== 'GET') return c.text('404 Not Found', 404);
+    return fallback(c);
   });
 }
 

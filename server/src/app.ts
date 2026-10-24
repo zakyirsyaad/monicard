@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { isAddress, type Hex } from 'viem';
 import type { AccountReader } from './account';
 
@@ -39,6 +39,25 @@ export const API_PREFIXES = [
 
 export function isApiPath(path: string): boolean {
   return API_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+}
+
+/**
+ * SPA entry handler. Reads index.html on every request: a fresh `pnpm -F web build`
+ * replaces both the file and its hashed asset names, so a boot-time copy goes stale.
+ * A missing entry is a 404; an unreadable one is a 503 rather than a crash.
+ */
+export function spaFallback(indexPath: string): (c: Context) => Response {
+  return (c) => {
+    try {
+      return c.html(readFileSync(indexPath, 'utf8'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return c.json({ reason: 'not_found' }, 404);
+      }
+      console.error('[server] cannot read SPA index:', shortMessage(error));
+      return c.json({ reason: 'unavailable' }, 503);
+    }
+  };
 }
 
 /** Bot addresses from DATA_DIR/bots.json; a missing or corrupt file is an empty list. */

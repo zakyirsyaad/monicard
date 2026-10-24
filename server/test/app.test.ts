@@ -1,11 +1,12 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import type { Hex, PublicClient } from 'viem';
 import type { ChainLike } from '../src/chainTypes';
 import { createAccountReader, type AccountReader } from '../src/account';
-import { buildApp, isApiPath, readBots, type AppDeps } from '../src/app';
+import { buildApp, isApiPath, readBots, spaFallback, type AppDeps } from '../src/app';
 
 const CARDS = '0x7af33cb3823ff99d37411a678452a7980d14cf9f' as Hex;
 const ARENA = '0xc08c323df6a5f9fabaF75A6060E4CA357F2251f9' as Hex;
@@ -21,6 +22,7 @@ beforeAll(() => {
 
 afterEach(() => {
   rmSync(join(dataDir, 'bots.json'), { force: true });
+  rmSync(join(dataDir, 'index.html'), { force: true });
 });
 
 afterAll(() => {
@@ -226,6 +228,35 @@ describe('readBots', () => {
     writeFileSync(join(dataDir, 'bots.json'), JSON.stringify({ bots: [USER, 42, null] }));
 
     expect(readBots(dataDir)).toEqual([USER]);
+  });
+});
+
+describe('spaFallback', () => {
+  test('reads index.html per request so a fresh build is served', async () => {
+    const indexPath = join(dataDir, 'index.html');
+    writeFileSync(indexPath, '<html>old-build</html>');
+    const app = new Hono();
+    app.get('*', spaFallback(indexPath));
+
+    const first = await app.request('/duel/3');
+    expect(first.status).toBe(200);
+    expect(await first.text()).toContain('old-build');
+
+    writeFileSync(indexPath, '<html>new-build</html>');
+    const second = await app.request('/duel/3');
+    expect(second.status).toBe(200);
+    const body = await second.text();
+    expect(body).toContain('new-build');
+    expect(body).not.toContain('old-build');
+  });
+
+  test('returns 404 when index.html is missing', async () => {
+    const app = new Hono();
+    app.get('*', spaFallback(join(dataDir, 'missing.html')));
+
+    const res = await app.request('/duel/3');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ reason: 'not_found' });
   });
 });
 
