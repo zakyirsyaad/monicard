@@ -34,6 +34,11 @@ function InAppBrowserBanner() {
 }
 
 const GITHUB = 'https://github.com/zakyirsyaad/monicard';
+const SOCIAL = [
+  { name: 'Demo video', href: 'https://youtu.be/N-FRL6CPAis' },
+  { name: 'Post on X', href: 'https://x.com/0xKayz_/status/2113913855734862058' },
+  { name: 'LinkedIn', href: 'https://lnkd.in/p/gB2QTGnT' },
+] as const;
 const SCAN = `${EXPLORER}/address`;
 
 const SECTION = 'flex flex-col gap-4 border-t border-line pt-6 md:pt-8';
@@ -282,6 +287,11 @@ function Footer({ config }: { config: Config | null }) {
         <a className="underline underline-offset-4" href={GITHUB} target="_blank" rel="noreferrer">
           GitHub
         </a>
+        {SOCIAL.map((l) => (
+          <a key={l.name} className="underline underline-offset-4" href={l.href} target="_blank" rel="noreferrer">
+            {l.name}
+          </a>
+        ))}
         {links.map((l) => (
           <a
             key={l.name}
