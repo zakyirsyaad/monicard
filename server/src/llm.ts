@@ -81,3 +81,19 @@ export function llmFromEnv(env: { LLM_BASE_URL?: string; LLM_API_KEY?: string; L
   if (!baseUrl || !apiKey || !model) return null;
   return createLlm({ baseUrl, apiKey, model });
 }
+
+const MAX_LOGGED_CHARS = 200;
+const loggedScopes = new Set<string>();
+
+/** Logs the first LLM failure per scope per process: the message only, never the key, prompt or request. */
+export function logLlmFailureOnce(scope: string, err: unknown): void {
+  if (loggedScopes.has(scope)) return;
+  loggedScopes.add(scope);
+  const message = err instanceof Error ? err.message : String(err);
+  console.warn(`[llm] ${scope} call failed, using fallback (further failures are not logged): ${message.slice(0, MAX_LOGGED_CHARS)}`);
+}
+
+/** Test helper: forget which scopes have already logged. */
+export function resetLlmFailureLog(): void {
+  loggedScopes.clear();
+}

@@ -1,5 +1,5 @@
 import { ELEMENTS, RARITIES, nadCardsAbi, nadmonFor, type Hex } from '@nad/shared';
-import { BaseError, ContractFunctionRevertedError, ExecutionRevertedError, parseEventLogs } from 'viem';
+import { parseEventLogs } from 'viem';
 import type { PublicClient, TransactionReceipt } from 'viem';
 import type { Llm } from '../llm';
 import { cardSvg } from './svg';
@@ -22,11 +22,14 @@ export type CardMetadataJson = {
   };
 };
 
+export type CardSvg = { svg: string; status: CardStatus };
+
 export type CardService = {
   /** Null when the token does not exist. Rejects on chain read failures (callers must not treat that as 404). */
   metadata(id: number): Promise<CardMetadataJson | null>;
-  svg(id: number): Promise<string | null>;
-  /** Forges lore for a freshly minted card. Concurrent calls for one id share a single forge. */
+  /** The card svg plus its status, so callers can avoid caching a placeholder that is still forging. */
+  svg(id: number): Promise<CardSvg | null>;
+  /** Forges AI lore for a freshly minted card; a no-op without an LLM. Concurrent calls for one id share one forge. */
   onMint(id: number): Promise<void>;
 };
 
@@ -39,6 +42,8 @@ export type CardServiceDeps = {
 };
 
 export const NOT_FOUND_TTL_MS = 10_000;
+/** How long one chain read of a card is reused; concurrent reads of an id always share one call. */
+export const CARD_CACHE_MS = 2_000;
 
 type Resolved = { data: CardData; lore: Lore; status: CardStatus };
 
@@ -70,35 +75,53 @@ function buildMetadata(r: Resolved, publicUrl: string): CardMetadataJson {
   };
 }
 
+/**
+ * Production passes `llm: null`: template lore is final (it is deterministic, computed on demand and never stored).
+ * With an LLM, only AI lore is stored, and `onMint` forges it while the card reports `forging`.
+ */
 export function createCardService(deps: CardServiceDeps): CardService {
   const { readCard, store, llm } = deps;
   const publicUrl = deps.publicUrl.replace(/\/+$/, '');
   const now = deps.now ?? Date.now;
   const missingUntil = new Map<number, number>();
+  const cached = new Map<number, { data: CardData; until: number }>();
+  const reads = new Map<number, Promise<CardData | null>>();
   const forging = new Map<number, Promise<void>>();
 
-  function storeQuietly(id: number, lore: Lore): void {
-    try {
-      store.set(id, lore);
-    } catch (err) {
-      console.error(`[cards] could not persist lore for card ${id}:`, err);
-    }
+  function prune(): void {
+    const t = now();
+    for (const [id, until] of missingUntil) if (until <= t) missingUntil.delete(id);
+    for (const [id, entry] of cached) if (entry.until <= t) cached.delete(id);
+  }
+
+  function readOnce(id: number): Promise<CardData | null> {
+    const hit = cached.get(id);
+    if (hit && hit.until > now()) return Promise.resolve(hit.data);
+    const running = reads.get(id);
+    if (running) return running;
+    const job = readCard(id)
+      .then((data) => {
+        prune();
+        if (data) cached.set(id, { data, until: now() + CARD_CACHE_MS });
+        return data;
+      })
+      .finally(() => reads.delete(id));
+    reads.set(id, job);
+    return job;
   }
 
   function loreFor(data: CardData): Resolved {
     const stored = store.get(data.id);
     if (forging.has(data.id)) return { data, lore: stored ?? fallbackLore(data), status: 'forging' };
-    if (stored) return { data, lore: stored, status: 'ready' };
-    const lore = fallbackLore(data);
-    storeQuietly(data.id, lore);
-    return { data, lore, status: 'ready' };
+    return { data, lore: stored ?? fallbackLore(data), status: 'ready' };
   }
 
   async function resolve(id: number): Promise<Resolved | null> {
     const until = missingUntil.get(id);
     if (until !== undefined && until > now()) return null;
-    const data = await readCard(id);
+    const data = await readOnce(id);
     if (!data) {
+      prune();
       missingUntil.set(id, now() + NOT_FOUND_TTL_MS);
       return null;
     }
@@ -106,10 +129,16 @@ export function createCardService(deps: CardServiceDeps): CardService {
     return loreFor(data);
   }
 
-  async function forge(id: number): Promise<void> {
-    const data = await readCard(id);
+  async function forge(id: number, llmClient: Llm): Promise<void> {
+    const data = await readOnce(id);
     if (!data || store.get(id)?.source === 'ai') return;
-    storeQuietly(id, await forgeLore(data, llm));
+    const lore = await forgeLore(data, llmClient);
+    if (lore.source !== 'ai') return;
+    try {
+      store.set(id, lore);
+    } catch (err) {
+      console.error(`[cards] could not persist lore for card ${id}:`, err instanceof Error ? err.message : String(err));
+    }
   }
 
   return {
@@ -119,13 +148,15 @@ export function createCardService(deps: CardServiceDeps): CardService {
     },
     svg: async (id) => {
       const r = await resolve(id);
-      return r ? cardSvg(r.data, r.lore, r.status) : null;
+      return r ? { svg: cardSvg(r.data, r.lore, r.status), status: r.status } : null;
     },
     onMint: (id) => {
+      if (!llm) return Promise.resolve();
       const running = forging.get(id);
       if (running) return running;
       missingUntil.delete(id);
-      const job = forge(id).finally(() => forging.delete(id));
+      cached.delete(id);
+      const job = forge(id, llm).finally(() => forging.delete(id));
       forging.set(id, job);
       return job;
     },
@@ -136,28 +167,16 @@ export function createCardService(deps: CardServiceDeps): CardService {
 
 type ChainCaller = { call<T>(fn: (client: PublicClient) => Promise<T>): Promise<T> };
 
-const MISSING_TOKEN_ERROR = 'ERC721NonexistentToken';
-
-/** True only for an ownerOf revert that means "no such token"; RPC trouble (even code -32603) is not a revert. */
-const isMissingToken = (err: unknown): boolean =>
-  err instanceof BaseError &&
-  err.walk(
-    (e) =>
-      (e instanceof ContractFunctionRevertedError && e.data?.errorName === MISSING_TOKEN_ERROR) ||
-      e instanceof ExecutionRevertedError,
-  ) !== null;
-
-/** Reads `cards(id)` after `ownerOf(id)`; a revert from `ownerOf` means the token does not exist (null). */
+/**
+ * One `cards(id)` read: the custom view never reverts and returns an all-zero struct for unknown ids,
+ * and a minted card always has `mintedAt` > 0 (its block number), so `mintedAt === 0` means no such token.
+ */
 export function createChainCardReader(chain: ChainCaller, cards: Hex): (id: number) => Promise<CardData | null> {
   return async (id) => {
-    const tokenId = BigInt(id);
-    try {
-      await chain.call((c) => c.readContract({ address: cards, abi: nadCardsAbi, functionName: 'ownerOf', args: [tokenId] }));
-    } catch (err) {
-      if (isMissingToken(err)) return null;
-      throw err;
-    }
-    const card = await chain.call((c) => c.readContract({ address: cards, abi: nadCardsAbi, functionName: 'cards', args: [tokenId] }));
+    const card = await chain.call((c) =>
+      c.readContract({ address: cards, abi: nadCardsAbi, functionName: 'cards', args: [BigInt(id)] }),
+    );
+    if (card.mintedAt === 0n) return null;
     return {
       id,
       atk: card.atk,

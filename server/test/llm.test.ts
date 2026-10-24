@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
-import { createLlm, llmFromEnv, sanitizeText, withTimeout } from '../src/llm';
+import { createLlm, llmFromEnv, logLlmFailureOnce, resetLlmFailureLog, sanitizeText, withTimeout } from '../src/llm';
 
 const CFG = { baseUrl: 'https://llm.example/v1', apiKey: 'sk-secret-key', model: 'test-model' };
 const schema = z.object({ title: z.string(), n: z.number() });
@@ -146,5 +146,23 @@ describe('withTimeout', () => {
     expect(((await pending) as Error).message).toBe('timeout');
     await expect(withTimeout(Promise.resolve(7), 50)).resolves.toBe(7);
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('logLlmFailureOnce', () => {
+  afterEach(() => resetLlmFailureLog());
+
+  test('logs the first failure per scope with the message only', () => {
+    resetLlmFailureLog();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const err = Object.assign(new Error('HTTP 401'), { request: { headers: { authorization: 'Bearer sk-secret-key' } } });
+    logLlmFailureOnce('lore', err);
+    logLlmFailureOnce('lore', new Error('HTTP 500'));
+    logLlmFailureOnce('coach', 'timeout');
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[0]).toHaveLength(1);
+    expect(String(warn.mock.calls[0]![0])).toContain('HTTP 401');
+    expect(String(warn.mock.calls[0]![0])).not.toContain('sk-secret-key');
+    expect(String(warn.mock.calls[1]![0])).toContain('timeout');
   });
 });

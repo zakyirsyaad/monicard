@@ -4,12 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, test, vi } from 'vitest';
 import { ELEMENTS, NADMON, nadmonFor } from '@nad/shared';
-import { encodeAbiParameters, encodeErrorResult, encodeEventTopics, encodeFunctionResult, createPublicClient, custom, decodeFunctionData, type Hex, type TransactionReceipt } from 'viem';
+import { encodeAbiParameters, encodeEventTopics, encodeFunctionResult, createPublicClient, custom, decodeFunctionData, type Hex, type TransactionReceipt } from 'viem';
 import { z } from 'zod';
 import { nadCardsAbi } from '@nad/shared';
 import type { Llm } from '../src/llm';
+import { resetLlmFailureLog } from '../src/llm';
 import { forgeLore, fallbackLore, type CardData, type Lore } from '../src/cards/lore';
-import { attachCardMinting, createCardService, createChainCardReader, type CardMetadataJson } from '../src/cards/service';
+import { CARD_CACHE_MS, NOT_FOUND_TTL_MS, attachCardMinting, createCardService, createChainCardReader, type CardMetadataJson } from '../src/cards/service';
 import { cardRoutes } from '../src/cards/routes';
 import { createCardStore } from '../src/cards/store';
 import {
@@ -370,7 +371,31 @@ function fakeLlm(produce: () => Promise<unknown>): Llm & { calls: JsonArgs[] } {
 const goodReply = { title: 'Rider of the Blitz', lore: 'Never waits for the next block.' };
 
 describe('forgeLore', () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    resetLlmFailureLog();
+  });
+
+  test('logs an LLM failure once per process: message only, no prompt', async () => {
+    resetLlmFailureLog();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const llm = fakeLlm(() => Promise.reject(new Error('HTTP 503')));
+    await forgeLore(card(), llm);
+    await forgeLore(card(), llm);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toContain('HTTP 503');
+    expect(String(warn.mock.calls[0]![0])).not.toContain('Sparkit');
+    warn.mockRestore();
+  });
+
+  test('does not log when there is no LLM or when the LLM succeeds', async () => {
+    resetLlmFailureLog();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await forgeLore(card(), null);
+    await forgeLore(card(), fakeLlm(async () => goodReply));
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
 
   test('uses the template when there is no LLM', async () => {
     expect(await forgeLore(card(), null)).toEqual(fallbackLore(card()));
@@ -433,13 +458,19 @@ const PUBLIC_URL = 'https://nadgacha.example';
 
 const memoryStore = () => {
   const map = new Map<number, Lore>();
-  return { map, get: (id: number) => map.get(id), set: (id: number, l: Lore) => void map.set(id, l) };
+  const set = vi.fn((id: number, l: Lore) => void map.set(id, l));
+  return { map, set, get: (id: number) => map.get(id) };
 };
 
 const deferred = <T,>() => {
   let resolve!: (v: T) => void;
   const promise = new Promise<T>((r) => (resolve = r));
   return { promise, resolve };
+};
+
+const clockAt = (start: number) => {
+  const clock = { t: start, now: () => clock.t };
+  return clock;
 };
 
 describe('createCardService', () => {
@@ -471,34 +502,75 @@ describe('createCardService', () => {
     expect(Object.keys(meta).sort()).toEqual(['attributes', 'description', 'image', 'nadgacha', 'name']);
   });
 
-  test('stats always come from the chain, lore from the store', async () => {
+  test('stats always come from the chain (re-read after the cache TTL), lore from the store', async () => {
     const store = memoryStore();
-    store.set(5, lore({ name: 'Sparkit', title: 'Stored Title', lore: 'Stored lore.', source: 'ai' }));
+    store.map.set(5, lore({ name: 'Sparkit', title: 'Stored Title', lore: 'Stored lore.', source: 'ai' }));
+    const clock = clockAt(1_000);
     let wins = 1;
-    const svc = createCardService({ readCard: async (id) => card({ id, wins }), store, llm: null, publicUrl: PUBLIC_URL });
+    const svc = createCardService({ readCard: async (id) => card({ id, wins }), store, llm: null, publicUrl: PUBLIC_URL, now: clock.now });
     expect((await svc.metadata(5))!.nadgacha.wins).toBe(1);
     wins = 2;
+    clock.t += CARD_CACHE_MS + 1;
     const again = (await svc.metadata(5))!;
     expect(again.nadgacha.wins).toBe(2);
     expect(again.nadgacha.title).toBe('Stored Title');
   });
 
-  test('creates template lore lazily for a mint missed while the server was down', async () => {
+  test('one chain read serves metadata and svg of the same id within the TTL, and concurrent calls share it', async () => {
+    const clock = clockAt(1_000);
+    const gate = deferred<CardData>();
+    const readCard = vi.fn(() => gate.promise);
+    const svc = createCardService({ readCard, store: memoryStore(), llm: null, publicUrl: PUBLIC_URL, now: clock.now });
+    const both = Promise.all([svc.metadata(5), svc.svg(5), svc.metadata(5)]);
+    gate.resolve(card({ id: 5 }));
+    const [meta, svg] = await both;
+    expect(meta).not.toBeNull();
+    expect(svg).not.toBeNull();
+    expect(readCard).toHaveBeenCalledTimes(1);
+    clock.t += CARD_CACHE_MS - 1;
+    await svc.svg(5);
+    expect(readCard).toHaveBeenCalledTimes(1);
+    clock.t += 2;
+    await svc.svg(5);
+    expect(readCard).toHaveBeenCalledTimes(2);
+  });
+
+  test('prunes expired entries of both caches when it writes', async () => {
+    const clock = clockAt(0);
+    const readCard = vi.fn(async (id: number) => (id < 100 ? card({ id }) : null));
+    const svc = createCardService({ readCard, store: memoryStore(), llm: null, publicUrl: PUBLIC_URL, now: clock.now });
+    await svc.metadata(1);
+    await svc.metadata(101);
+    clock.t += NOT_FOUND_TTL_MS + 1;
+    await svc.metadata(2); // write: prunes 1 and 101
+    readCard.mockClear();
+    await svc.metadata(1);
+    await svc.metadata(101);
+    expect(readCard).toHaveBeenCalledTimes(2);
+  });
+
+  test('computes template lore on demand for any card and never persists it', async () => {
     const store = memoryStore();
     const svc = createCardService({ readCard: async (id) => card({ id }), store, llm: null, publicUrl: PUBLIC_URL });
     const meta = (await svc.metadata(9))!;
     expect(meta.nadgacha.status).toBe('ready');
-    expect(store.get(9)).toEqual(fallbackLore(card({ id: 9 })));
-    expect(meta.nadgacha.title).toBe(store.get(9)!.title);
+    expect(meta.nadgacha.title).toBe(fallbackLore(card({ id: 9 })).title);
+    expect(await svc.svg(9)).toMatchObject({ status: 'ready' });
+    expect(store.set).not.toHaveBeenCalled();
   });
 
-  test('still serves lore when persisting the lazy template fails', async () => {
-    const store = { get: () => undefined, set: () => { throw new Error('disk full'); } };
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const svc = createCardService({ readCard: async (id) => card({ id }), store, llm: null, publicUrl: PUBLIC_URL });
-    expect((await svc.metadata(9))!.nadgacha.status).toBe('ready');
-    expect(await svc.svg(9)).toContain('<svg');
-    error.mockRestore();
+  test('without an LLM, onMint is a no-op: no read, no forging, no persist', async () => {
+    const store = memoryStore();
+    const readCard = vi.fn(async (id: number) => card({ id }));
+    const svc = createCardService({ readCard, store, llm: null, publicUrl: PUBLIC_URL });
+    const minting = svc.onMint(5);
+    expect((await svc.metadata(5))!.nadgacha.status).toBe('ready');
+    await minting;
+    expect(readCard).toHaveBeenCalledTimes(1); // only the metadata read
+    expect(store.set).not.toHaveBeenCalled();
+    const idle = createCardService({ readCard: readCard.mockClear(), store, llm: null, publicUrl: PUBLIC_URL });
+    await idle.onMint(6);
+    expect(readCard).not.toHaveBeenCalled();
   });
 
   test('reports forging with full stats while an onMint forge is in progress, then ready with ai lore', async () => {
@@ -513,14 +585,36 @@ describe('createCardService', () => {
     expect(during.nadgacha.hp).toBe(1950);
     expect(during.nadgacha.nadmon.name).toBe('Sparkit');
     expect(during.name).toBe('Sparkit #5');
-    expect(await svc.svg(5)).toContain('Forging lore…');
+    const forgingSvg = (await svc.svg(5))!;
+    expect(forgingSvg.status).toBe('forging');
+    expect(forgingSvg.svg).toContain('Forging lore…');
     gate.resolve(goodReply);
     await minting;
     const after = (await svc.metadata(5))!;
     expect(after.nadgacha.status).toBe('ready');
     expect(after.nadgacha.title).toBe(goodReply.title);
-    expect(store.get(5)?.source).toBe('ai');
-    expect(await svc.svg(5)).toContain(goodReply.title);
+    expect(store.map.get(5)?.source).toBe('ai');
+    const readySvg = (await svc.svg(5))!;
+    expect(readySvg.status).toBe('ready');
+    expect(readySvg.svg).toContain(goodReply.title);
+  });
+
+  test('template fallback from a failed forge is not persisted', async () => {
+    const store = memoryStore();
+    const llm = fakeLlm(() => Promise.reject(new Error('HTTP 500')));
+    const svc = createCardService({ readCard: async (id) => card({ id }), store, llm, publicUrl: PUBLIC_URL });
+    await svc.onMint(5);
+    expect(store.set).not.toHaveBeenCalled();
+    expect((await svc.metadata(5))!.nadgacha.status).toBe('ready');
+  });
+
+  test('still serves lore when persisting AI lore fails', async () => {
+    const store = { get: () => undefined, set: () => { throw new Error('disk full'); } };
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const svc = createCardService({ readCard: async (id) => card({ id }), store, llm: fakeLlm(async () => goodReply), publicUrl: PUBLIC_URL });
+    await svc.onMint(9);
+    expect((await svc.metadata(9))!.nadgacha.status).toBe('ready');
+    error.mockRestore();
   });
 
   test('de-duplicates concurrent onMint calls per id', async () => {
@@ -551,22 +645,22 @@ describe('createCardService', () => {
       if (fail) throw new Error('rpc down');
       return card({ id });
     };
-    const svc = createCardService({ readCard, store: memoryStore(), llm: null, publicUrl: PUBLIC_URL });
+    const svc = createCardService({ readCard, store: memoryStore(), llm: fakeLlm(async () => goodReply), publicUrl: PUBLIC_URL });
     await expect(svc.onMint(5)).rejects.toThrow('rpc down');
     fail = false;
     expect((await svc.metadata(5))!.nadgacha.status).toBe('ready');
   });
 
   test('returns null for a nonexistent token and caches that for 10 s', async () => {
-    let clock = 1_000;
+    const clock = clockAt(1_000);
     const readCard = vi.fn(async () => null);
-    const svc = createCardService({ readCard, store: memoryStore(), llm: null, publicUrl: PUBLIC_URL, now: () => clock });
+    const svc = createCardService({ readCard, store: memoryStore(), llm: null, publicUrl: PUBLIC_URL, now: clock.now });
     expect(await svc.metadata(404)).toBeNull();
     expect(await svc.svg(404)).toBeNull();
-    clock += 9_999;
+    clock.t += 9_999;
     expect(await svc.metadata(404)).toBeNull();
     expect(readCard).toHaveBeenCalledTimes(1);
-    clock += 2;
+    clock.t += 2;
     expect(await svc.metadata(404)).toBeNull();
     expect(readCard).toHaveBeenCalledTimes(2);
   });
@@ -574,14 +668,14 @@ describe('createCardService', () => {
   test('onMint clears the negative cache so a fresh mint is visible at once', async () => {
     let exists = false;
     const readCard = async (id: number) => (exists ? card({ id }) : null);
-    const svc = createCardService({ readCard, store: memoryStore(), llm: null, publicUrl: PUBLIC_URL, now: () => 1 });
+    const svc = createCardService({ readCard, store: memoryStore(), llm: fakeLlm(async () => goodReply), publicUrl: PUBLIC_URL, now: () => 1 });
     expect(await svc.metadata(8)).toBeNull();
     exists = true;
     await svc.onMint(8);
     expect(await svc.metadata(8)).not.toBeNull();
   });
 
-  test('chain read errors propagate and are not cached as 404', async () => {
+  test('chain read errors propagate and are not cached', async () => {
     let fail = true;
     const readCard = async (id: number) => {
       if (fail) throw new Error('rpc down');
@@ -595,27 +689,28 @@ describe('createCardService', () => {
 
   test('svg returns a valid card for an existing token', async () => {
     const svc = createCardService({ readCard: async (id) => card({ id }), store: memoryStore(), llm: null, publicUrl: PUBLIC_URL });
-    const svg = (await svc.svg(204))!;
-    expect(svg.startsWith('<svg')).toBe(true);
-    expect(svg).toContain('Blitz Jogja · 204');
+    const result = (await svc.svg(204))!;
+    expect(result.svg.startsWith('<svg')).toBe(true);
+    expect(result.svg).toContain('Blitz Jogja · 204');
+    expect(result.status).toBe('ready');
   });
 });
 
 // ------------------------------------------------------------------- routes
 
 describe('cardRoutes', () => {
-  const makeApp = () => {
+  const makeApp = (llm: Llm | null = null, store = memoryStore()) => {
     const svc = createCardService({
       readCard: async (id) => (id === 5 ? card({ id }) : null),
-      store: memoryStore(),
-      llm: null,
+      store,
+      llm,
       publicUrl: PUBLIC_URL,
     });
-    return cardRoutes(svc);
+    return { app: cardRoutes(svc), svc };
   };
 
   test('/card/5 returns metadata JSON', async () => {
-    const res = await makeApp().request('/card/5');
+    const res = await makeApp().app.request('/card/5');
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('application/json');
     const body = (await res.json()) as CardMetadataJson;
@@ -624,16 +719,29 @@ describe('cardRoutes', () => {
     expect(body.image).toBe(`${PUBLIC_URL}/card/5/image.svg`);
   });
 
-  test('/card/5/image.svg returns svg with cache headers', async () => {
-    const res = await makeApp().request('/card/5/image.svg');
+  test('/card/5/image.svg returns svg cacheable for 60 s when ready', async () => {
+    const res = await makeApp().app.request('/card/5/image.svg');
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('image/svg+xml; charset=utf-8');
     expect(res.headers.get('cache-control')).toBe('public, max-age=60');
     expect((await res.text()).startsWith('<svg')).toBe(true);
   });
 
+  test('a forging card svg is sent with cache-control no-store', async () => {
+    const gate = deferred<unknown>();
+    const { app, svc } = makeApp(fakeLlm(() => gate.promise));
+    const minting = svc.onMint(5);
+    const res = await app.request('/card/5/image.svg');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(await res.text()).toContain('Forging lore…');
+    gate.resolve(goodReply);
+    await minting;
+    expect((await app.request('/card/5/image.svg')).headers.get('cache-control')).toBe('public, max-age=60');
+  });
+
   test('missing tokens are 404 with reason not_found on both routes', async () => {
-    const app = makeApp();
+    const { app } = makeApp();
     for (const path of ['/card/6', '/card/6/image.svg']) {
       const res = await app.request(path);
       expect(res.status).toBe(404);
@@ -642,17 +750,18 @@ describe('cardRoutes', () => {
   });
 
   test('non-numeric ids and the /card/:id.svg shape are 404 and never reach the service', async () => {
-    const app = makeApp();
+    const { app } = makeApp();
     expect((await app.request('/card/abc')).status).toBe(404);
     expect((await app.request('/card/abc/image.svg')).status).toBe(404);
     expect((await app.request('/card/5.svg')).status).toBe(404);
     expect((await app.request('/card/99999999999999999999')).status).toBe(404);
   });
 
-  test('chain failures answer 503 instead of caching a 404', async () => {
+  test('chain failures answer 503 and log only the short message, never the full error', async () => {
+    const failure = Object.assign(new Error('Details: POST https://rpc.secret.example/key123 failed'), { shortMessage: 'HTTP request failed.' });
     const svc = createCardService({
       readCard: async () => {
-        throw new Error('rpc down');
+        throw failure;
       },
       store: memoryStore(),
       llm: null,
@@ -660,9 +769,13 @@ describe('cardRoutes', () => {
     });
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const res = await cardRoutes(svc).request('/card/5');
+    const logged = JSON.stringify(error.mock.calls.map((args) => args.map((a) => (a instanceof Error ? 'ERROR_OBJECT' : a))));
     error.mockRestore();
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ reason: 'unavailable' });
+    expect(logged).toContain('HTTP request failed.');
+    expect(logged).not.toContain('ERROR_OBJECT');
+    expect(logged).not.toContain('rpc.secret.example');
   });
 });
 
@@ -671,7 +784,10 @@ describe('cardRoutes', () => {
 const CARDS_ADDRESS = '0x00000000000000000000000000000000000000c1' as Hex;
 const OWNER = '0x00000000000000000000000000000000000000a1' as Hex;
 
+const ZERO_CARD = { atk: 0, hp: 0, element: 0, rarity: 0, wins: 0, losses: 0, mintedAt: 0n };
+
 function fakeChain(minted: Map<number, CardData>, failRpc = () => false) {
+  const calls: string[] = [];
   const client = createPublicClient({
     transport: custom(
       {
@@ -680,46 +796,48 @@ function fakeChain(minted: Map<number, CardData>, failRpc = () => false) {
           if (failRpc()) throw Object.assign(new Error('connection refused'), { code: -32603 });
           const data = (params as [{ data: Hex }])[0].data;
           const call = decodeFunctionData({ abi: nadCardsAbi, data });
-          const id = Number(call.args?.[0]);
-          const found = minted.get(id);
-          if (call.functionName === 'ownerOf') {
-            if (!found) {
-              const revertData = encodeErrorResult({ abi: nadCardsAbi, errorName: 'ERC721NonexistentToken', args: [BigInt(id)] });
-              throw Object.assign(new Error('execution reverted'), { code: 3, data: revertData });
-            }
-            return encodeFunctionResult({ abi: nadCardsAbi, functionName: 'ownerOf', result: OWNER });
-          }
-          if (call.functionName === 'cards') {
-            return encodeFunctionResult({
-              abi: nadCardsAbi,
-              functionName: 'cards',
-              result: { ...found!, mintedAt: BigInt(found!.mintedAt) },
-            });
-          }
-          throw new Error(`unexpected call ${call.functionName}`);
+          calls.push(call.functionName);
+          if (call.functionName !== 'cards') throw new Error(`unexpected call ${call.functionName}`);
+          const found = minted.get(Number(call.args?.[0]));
+          return encodeFunctionResult({
+            abi: nadCardsAbi,
+            functionName: 'cards',
+            result: found ? { ...found, mintedAt: BigInt(found.mintedAt) } : ZERO_CARD,
+          });
         },
       },
       { retryCount: 0 },
     ),
   });
-  return { call: <T,>(fn: (c: typeof client) => Promise<T>) => fn(client) } as unknown as Parameters<typeof createChainCardReader>[0];
+  const chain = { call: <T,>(fn: (c: typeof client) => Promise<T>) => fn(client) } as unknown as Parameters<typeof createChainCardReader>[0];
+  return { chain, calls };
 }
 
 describe('createChainCardReader', () => {
-  test('reads card stats, with mintedAt as a number', async () => {
+  test('reads card stats with a single cards(id) call, mintedAt as a number', async () => {
     const minted = new Map([[7, card({ id: 7, mintedAt: 73_562_481 })]]);
-    const read = createChainCardReader(fakeChain(minted), CARDS_ADDRESS);
-    expect(await read(7)).toEqual(card({ id: 7, mintedAt: 73_562_481 }));
+    const { chain, calls } = fakeChain(minted);
+    expect(await createChainCardReader(chain, CARDS_ADDRESS)(7)).toEqual(card({ id: 7, mintedAt: 73_562_481 }));
+    expect(calls).toEqual(['cards']);
   });
 
-  test('returns null when ownerOf reverts (token does not exist)', async () => {
-    const read = createChainCardReader(fakeChain(new Map()), CARDS_ADDRESS);
-    expect(await read(99)).toBeNull();
+  test('mintedAt 0 means the token does not exist (null)', async () => {
+    const { chain, calls } = fakeChain(new Map());
+    expect(await createChainCardReader(chain, CARDS_ADDRESS)(99)).toBeNull();
+    expect(calls).toEqual(['cards']);
+  });
+
+  test('a zero-struct token answers 404 through service and route', async () => {
+    const { chain } = fakeChain(new Map());
+    const svc = createCardService({ readCard: createChainCardReader(chain, CARDS_ADDRESS), store: memoryStore(), llm: null, publicUrl: PUBLIC_URL });
+    const res = await cardRoutes(svc).request('/card/99');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ reason: 'not_found' });
   });
 
   test('rethrows transport failures instead of reporting a missing token', async () => {
-    const read = createChainCardReader(fakeChain(new Map([[7, card({ id: 7 })]]), () => true), CARDS_ADDRESS);
-    await expect(read(7)).rejects.toThrow();
+    const { chain } = fakeChain(new Map([[7, card({ id: 7 })]]), () => true);
+    await expect(createChainCardReader(chain, CARDS_ADDRESS)(7)).rejects.toThrow();
   });
 });
 

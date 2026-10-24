@@ -1,10 +1,10 @@
 import { Hono } from 'hono';
 import type { CardService } from './service';
 
-const SVG_HEADERS = {
-  'content-type': 'image/svg+xml; charset=utf-8',
-  'cache-control': 'public, max-age=60',
-} as const;
+const SVG_TYPE = 'image/svg+xml; charset=utf-8';
+const CACHE_READY = 'public, max-age=60';
+/** A card still forging shows a placeholder, so it must not be cached by browsers or proxies. */
+const CACHE_FORGING = 'no-store';
 
 /** Parses a decimal path segment; null when it does not fit a JS safe integer. */
 function parseId(raw: string): number | null {
@@ -21,7 +21,8 @@ export function cardRoutes(service: CardService): Hono {
   const notFound = (c: { json: (body: unknown, status: 404) => Response }): Response => c.json({ reason: 'not_found' }, 404);
 
   app.onError((err, c) => {
-    console.error('[cards] request failed:', err);
+    // Never log the whole error: viem errors embed the RPC URL.
+    console.error('[cards] request failed:', (err as { shortMessage?: string }).shortMessage ?? err.message);
     return c.json({ reason: 'unavailable' }, 503);
   });
 
@@ -33,8 +34,10 @@ export function cardRoutes(service: CardService): Hono {
 
   app.get('/card/:id{[0-9]+}/image.svg', async (c) => {
     const id = parseId(c.req.param('id'));
-    const svg = id === null ? null : await service.svg(id);
-    return svg ? c.body(svg, 200, SVG_HEADERS) : notFound(c);
+    const card = id === null ? null : await service.svg(id);
+    if (!card) return notFound(c);
+    const cache = card.status === 'forging' ? CACHE_FORGING : CACHE_READY;
+    return c.body(card.svg, 200, { 'content-type': SVG_TYPE, 'cache-control': cache });
   });
 
   return app;

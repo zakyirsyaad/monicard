@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { ZodType } from 'zod';
-import type { Llm } from '../src/llm';
+import { resetLlmFailureLog, type Llm } from '../src/llm';
 import type { Hex } from '@nad/shared';
 import type { DuelSummary } from '../src/sim/types';
 import {
@@ -393,7 +393,10 @@ describe('mergeTrained', () => {
 });
 
 describe('llmCoach', () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    resetLlmFailureLog();
+  });
 
   type Call = { system: string; user: string; timeoutMs: number };
   const fakeLlm = (produce: () => Promise<unknown>): Llm & { calls: Call[] } => {
@@ -446,6 +449,18 @@ describe('llmCoach', () => {
     ]) {
       expect(await llmCoach(lost, policy(), fakeLlm(async () => bad), rng)).toEqual(ruleCoach(lost, policy(), rng));
     }
+  });
+
+  test('logs an LLM failure once per process: message only, no prompt', async () => {
+    resetLlmFailureLog();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const llm = fakeLlm(() => Promise.reject(new Error('HTTP 502')));
+    await llmCoach(lost, policy({ skillHpThreshold: 77 }), llm, rng);
+    await llmCoach(lost, policy({ skillHpThreshold: 77 }), llm, rng);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toContain('HTTP 502');
+    expect(String(warn.mock.calls[0]![0])).not.toContain('77%');
+    warn.mockRestore();
   });
 
   test('falls back to ruleCoach when the LLM throws', async () => {

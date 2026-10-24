@@ -1,6 +1,6 @@
 import { skillDamage } from '@nad/shared';
 import { z } from 'zod';
-import { sanitizeText, withTimeout, type Llm } from '../llm';
+import { logLlmFailureOnce, sanitizeText, withTimeout, type Llm } from '../llm';
 import type { DuelSummary } from '../sim/types';
 import type { AgentData, Lesson, Policy } from './policy';
 
@@ -136,8 +136,8 @@ export async function llmCoach(
     const reply = await withTimeout(llm.json(COACH_SYSTEM, prompt, coachReply, timeoutMs), timeoutMs);
     const cleaned = cleanCoachReply(reply);
     if (cleaned) return cleaned;
-  } catch {
-    // fall through to the rule coach
+  } catch (err) {
+    logLlmFailureOnce('coach', err);
   }
   return ruleCoach(s, policy, rng, opts?.ctx);
 }

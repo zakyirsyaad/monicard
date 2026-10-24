@@ -1,6 +1,6 @@
 import { ELEMENTS, RARITIES, nadmonFor } from '@nad/shared';
 import { z } from 'zod';
-import { sanitizeText, withTimeout, type Llm } from '../llm';
+import { logLlmFailureOnce, sanitizeText, withTimeout, type Llm } from '../llm';
 
 /** On-chain card stats; `mintedAt` is the mint block number. */
 export type CardData = {
@@ -133,7 +133,8 @@ export async function forgeLore(card: CardData, llm: Llm | null, timeoutMs = DEF
     const reply = await withTimeout(llm.json(LORE_SYSTEM, lorePrompt(card, template.name), loreReply, timeoutMs), timeoutMs);
     const cleaned = cleanReply(reply);
     return cleaned ? { name: template.name, ...cleaned, source: 'ai' } : template;
-  } catch {
+  } catch (err) {
+    logLlmFailureOnce('lore', err);
     return template;
   }
 }
