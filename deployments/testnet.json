@@ -11,7 +11,12 @@
     "attack": 62000,
     "settle": 107000,
     "stake": 131000,
-    "claim": 154000
+    "claim": 154000,
+    "createMatch": 211000,
+    "joinMatch": 102000,
+    "act": 102000,
+    "claimTimeout": 55000
   },
-  "stakeVault": "0x642C1364b62344128087549ceeD9268D5E3385df"
+  "stakeVault": "0x642C1364b62344128087549ceeD9268D5E3385df",
+  "battle": "0xDaFd1431C13E744eE66Df2EAebfCf23b709a14AD"
 }
