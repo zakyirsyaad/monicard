@@ -11,7 +11,7 @@ Produk sekarang: **duel kartu bergiliran best-of-3 ala Pokémon TCG Pocket, seti
 - **Satu giliran = satu transaksi** (±0,01 MON). Blok Monad ±300 ms, jadi papan bergerak secepat chain.
 - **AI Agent** lawan yang belajar dari setiap duel (level naik, pelajaran tertulis tampil).
 - Banyak match berjalan **paralel** (swarm bot di layar proyektor `/arena`).
-- Live di **Monad testnet**. URL: **monicard.xyz** (cadangan: nadgacha.43-134-58-217.sslip.io).
+- Live di **Monad testnet**. URL: **monicard.xyz**.
 - Jangan menulis: "tap" sebagai mekanik utama, "bet", "wager", "gamble", klaim yang belum terbukti (mainnet sebelum ter-deploy, angka latensi yang belum diukur).
 
 ## Alur adegan (±20 dtk)
@@ -34,4 +34,4 @@ Produk sekarang: **duel kartu bergiliran best-of-3 ala Pokémon TCG Pocket, seti
 - Gerak hanya `transform` dan `opacity`. Banyak `ease-out`, tanpa pantulan berlebihan.
 
 ## Referensi tampilan nyata
-Jalankan `https://nadgacha.43-134-58-217.sslip.io/battle` di HP atau browser lebar 375 untuk melihat papan sungguhan: bar atas (ronde dan skor), kartu lawan di atas, kartu kamu di bawah, tangan yang bisa digeser, tombol Attack dan Special. Jangan menyalin persis; sederhanakan untuk video.
+Jalankan `https://monicard.xyz/battle` di HP atau browser lebar 375 untuk melihat papan sungguhan: bar atas (ronde dan skor), kartu lawan di atas, kartu kamu di bawah, tangan yang bisa digeser, tombol Attack dan Special. Jangan menyalin persis; sederhanakan untuk video.

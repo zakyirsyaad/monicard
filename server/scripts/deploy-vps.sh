@@ -6,7 +6,7 @@
 #   --no-build  skip the local web build (web/dist/index.html must already exist)
 #
 # Overrides: VPS_HOST (0xAlvary3), VPS_DIR (nadgacha, relative to remote home),
-#            PUBLIC_URL_CHECK (https://nadgacha.43-134-58-217.sslip.io)
+#            PUBLIC_URL_CHECK (https://monicard.xyz)
 #
 # Only the pm2 process "nadgacha" and the ~/$VPS_DIR directory are ever touched.
 set -euo pipefail
@@ -16,7 +16,7 @@ cd "$ROOT"
 
 VPS_HOST="${VPS_HOST:-0xAlvary3}"
 VPS_DIR="${VPS_DIR-nadgacha}"
-PUBLIC_URL_CHECK="${PUBLIC_URL_CHECK:-https://nadgacha.43-134-58-217.sslip.io}"
+PUBLIC_URL_CHECK="${PUBLIC_URL_CHECK:-https://monicard.xyz}"
 # rsync --delete runs against this directory, so it must be a plain path below the remote home.
 case "$VPS_DIR" in
   '' | . | .. | /* | ../* | */.. | */../* | ~*)

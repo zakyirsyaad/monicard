@@ -90,7 +90,7 @@ describe('deploy-vps.sh', () => {
       '--name nadgacha',
       'rsync -az --delete',
       '0xAlvary3',
-      'nadgacha.43-134-58-217.sslip.io',
+      'monicard.xyz',
     ]) {
       expect(text, needle).toContain(needle);
     }

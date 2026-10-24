@@ -9,8 +9,7 @@ Built in one day at **Monad Blitz Jogja Vol. 2** (24 October 2026) by a solo bui
 - **Repo:** https://github.com/zakyirsyaad/monicard
 - **Live app:** https://monicard.xyz (open on your phone)
 - **Projector view:** https://monicard.xyz/arena
-- **Mirror:** https://nadgacha.43-134-58-217.sslip.io (same server)
-- **Network:** Monad Testnet (chain id 10143)
+- **Network:** Monad Testnet (chain id 10143); contracts also deployed on Monad Mainnet (chain id 143)
 
 ## Try it in 30 seconds
 
@@ -55,7 +54,19 @@ A match is roughly 15 to 25 transactions at about 0.01 MON each.
 | `BlitzArena` | Tap Blitz: parallel real-time duels | [`0xc08c323df6a5f9fAbaF75A6060E4CA357F2251f9`](https://testnet.monadscan.com/address/0xc08c323df6a5f9fAbaF75A6060E4CA357F2251f9#code) |
 | `StakeVault` | Staked Tap Blitz duels with a 5% treasury rake | [`0x642C1364b62344128087549ceeD9268D5E3385df`](https://testnet.monadscan.com/address/0x642C1364b62344128087549ceeD9268D5E3385df#code) |
 
-Source is verified for every address above. The Monad Mainnet deployment (chain id 143) uses the same bytecode and is listed in `deployments/mainnet.json` once broadcast.
+### Monad Mainnet (chain id 143)
+
+The same five contracts, same bytecode, deployed and verified on mainnet (`deployments/mainnet.json`). The live app runs on testnet.
+
+| Contract | Monad Mainnet (143) |
+|---|---|
+| `CardBattle` | [`0x1407a7463ec8dEAA57C55Df634f4C150AE93d26f`](https://monadscan.com/address/0x1407a7463ec8dEAA57C55Df634f4C150AE93d26f#code) |
+| `BattleStakeVault` | [`0x4D13C24b27E36B4338f42C43878C981A92f768f4`](https://monadscan.com/address/0x4D13C24b27E36B4338f42C43878C981A92f768f4#code) |
+| `NadCards` | [`0x9ED90215833c4ADE8C72132AC079bc9e5d5A30A8`](https://monadscan.com/address/0x9ED90215833c4ADE8C72132AC079bc9e5d5A30A8#code) |
+| `BlitzArena` | [`0xdd56839940F5E20a4543e82ab01F43991C445E9A`](https://monadscan.com/address/0xdd56839940F5E20a4543e82ab01F43991C445E9A#code) |
+| `StakeVault` | [`0x2B740d932dD20B73230ff4cbfCF8F25b4Fe18933`](https://monadscan.com/address/0x2B740d932dD20B73230ff4cbfCF8F25b4Fe18933#code) |
+
+Source is verified for every address above, on MonadScan and MonadVision.
 
 ## Run locally (no MON needed)
 

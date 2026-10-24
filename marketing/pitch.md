@@ -6,7 +6,7 @@ Prinsip: hanya demo fitur yang sudah terbukti jalan di HP (rubrik "all announced
 ## Layar
 - **Proyektor:** laptop menampilkan `/arena` (layar penuh, tema gelap) di URL live. QR "Scan to play" tampil di sudut.
 - **Tanganmu:** HP dengan data seluler, burner sudah ada.
-- **Tab cadangan di laptop:** MonadScan arena (testnet), repo GitHub, video demo.
+- **Tab cadangan di laptop:** MonadScan CardBattle (testnet dan mainnet), repo GitHub, video demo.
 
 ## Run-sheet
 
@@ -43,7 +43,7 @@ Prinsip: hanya demo fitur yang sudah terbukti jalan di HP (rubrik "all announced
 **2:50 – 3:00 · Sebutkan dengan lantang (wajib, rubrik Basic)**
 > "Everything is public:
 > - **Repo:** github.com/zakyirsyaad/monicard
-> - **Contracts:** CardBattle, NadCards, BlitzArena and StakeVault, **verified on MonadScan**, deployed on **Monad testnet**[, and on **Monad mainnet** too — hanya ucapkan kalau sudah ter-deploy].
+> - **Contracts:** CardBattle, NadCards, BlitzArena and StakeVault, **verified on MonadScan**, deployed on **Monad testnet**, and on **Monad mainnet** too.
 > - **Live:** **monicard.xyz** — running right now.
 > Thank you."
 
@@ -51,7 +51,7 @@ Prinsip: hanya demo fitur yang sudah terbukti jalan di HP (rubrik "all announced
 | Placeholder | Sumber |
 |---|---|
 | Alamat testnet | README / `deployments/testnet.json` |
-| Alamat mainnet | `deployments/mainnet.json` (setelah deploy) |
+| Alamat mainnet | README / `deployments/mainnet.json` (sudah ter-deploy 15:33) |
 | [X] kartu dan [Y] tx | dihitung koordinator menjelang pitch |
 | tx/s puncak | dibaca langsung dari layar `/arena` saat swarm jalan |
 

@@ -1,0 +1,25 @@
+{
+  "chainId": 143,
+  "cards": "0x9ED90215833c4ADE8C72132AC079bc9e5d5A30A8",
+  "arena": "0xdd56839940F5E20a4543e82ab01F43991C445E9A",
+  "deployBlock": 116136694,
+  "gasLimits": {
+    "freePull": 189000,
+    "paidPull": 189000,
+    "createDuel": 122000,
+    "joinDuel": 137000,
+    "attack": 62000,
+    "settle": 107000,
+    "stake": 131000,
+    "claim": 154000,
+    "createMatch": 211000,
+    "joinMatch": 102000,
+    "act": 101000,
+    "claimTimeout": 55000,
+    "battleStake": 240000,
+    "battleClaim": 262000
+  },
+  "stakeVault": "0x2B740d932dD20B73230ff4cbfCF8F25b4Fe18933",
+  "battle": "0x1407a7463ec8dEAA57C55Df634f4C150AE93d26f",
+  "battleStakeVault": "0x4D13C24b27E36B4338f42C43878C981A92f768f4"
+}
