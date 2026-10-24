@@ -35,10 +35,10 @@ Prinsip: hanya demo fitur yang sudah terbukti jalan di HP (rubrik "all announced
 > "Now ten bot duels at once, plus everyone in this room. Each match lives in its own storage, so Monad runs them in parallel. [Baca tx/s puncak dari layar.]"
 
 **2:30 – 2:50 · Pasar dan bisnis (PMF + revenue)**
-> "Who pays? Event organizers, like this one. Every meetup and hackathon needs an onchain onboarding moment, and most people never get past installing a wallet. Here you scan, and you're playing in three seconds. Today, **[X] people in this room pulled a card and sent [Y] transactions**.
-> The battle is free to play: that's our funnel. Revenue sits around it, already onchain: sponsored event mode, like this projector screen; paid packs at 0.05 MON into a contract treasury, **[Z] MON collected today**; a 5% royalty on every resale; and staked duels with a 5% rake. A battle action costs about 0.01 MON in gas, so a full match is about 0.2 MON, funded by the event package; packs and stake rake sit on top. And you can stake on a Card Battle: the winner takes the pot, the treasury keeps 5%."
+> "Who pays? Event organizers, like this one. Every meetup and hackathon needs an onchain onboarding moment, and most people never get past installing a wallet. Here you scan, and you're playing in three seconds. Today we minted **23 cards** and sent **about 300 transactions**, **90 of them on Monad mainnet**.
+> The battle is free to play: that's our funnel. Revenue sits around it, already onchain: sponsored event mode, like this projector screen; paid packs at 0.05 MON into a contract treasury, **0.2 MON collected on testnet today**; a 5% royalty on every resale; and staked duels with a 5% rake. A battle action costs about 0.01 MON in gas, so a full match is about 0.2 MON, funded by the event package; packs and stake rake sit on top. And you can stake on a Card Battle: the winner takes the pot, the treasury keeps 5%."
 
-[X, Y, Z dihitung koordinator tepat sebelum pitch (event `CardMinted`, jumlah tx, saldo treasury NadCards); bacakan, jangan dikarang. Kalau Staked Card Battle sempat jadi, ganti kalimat terakhir menjadi "And staking is live in Card Battle too."]
+[Angka dihitung 16:05 dari chain: kartu = token NadCards (testnet 20 + mainnet 3); tx = nonce burner pemain + AI Agent + operator + master (testnet ±209, mainnet ±91; bot swarm tidak dihitung); treasury = saldo NadCards testnet 0.2 MON. Kalau ada orang ruangan yang main sebelum pitch, angka hanya naik: aman diucapkan. Kalau Staked Card Battle sempat jadi, ganti kalimat terakhir menjadi "And staking is live in Card Battle too."]
 
 **2:50 – 3:00 · Sebutkan dengan lantang (wajib, rubrik Basic)**
 > "Everything is public:
