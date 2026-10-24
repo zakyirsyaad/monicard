@@ -4,17 +4,21 @@ import type { ErrorContext } from '../errors';
 import { StakeFundsError } from '../stakeFlows';
 import { BattleStakeSkipped } from './stake';
 import type { FundReason } from '../types';
+import { IS_MAINNET } from '../network';
+
+/** Mainnet players hold real MON; testnet copy keeps saying test MON. */
+const COIN = IS_MAINNET ? 'MON' : 'test MON';
 
 const FUND_MESSAGE: Record<Exclude<FundReason, 'balance_ok'>, string> = {
   disabled: 'Test MON is off right now. Ask the host to enable it.',
-  limit_address: 'This wallet has used all its test MON top-ups. Try another wallet.',
-  limit_ip: 'Too many test MON top-ups from this network. Try again in a few minutes.',
-  budget: 'The event test MON budget is spent. Ask the host to top it up.',
+  limit_address: `This wallet has used all its ${COIN} top-ups. Try another wallet.`,
+  limit_ip: `Too many ${COIN} top-ups from this network. Try again in a few minutes.`,
+  budget: `The event ${COIN} budget is spent. Ask the host to top it up.`,
 };
 
 export const STAKE_CLOSED_MESSAGE =
   "Your stake didn't go through. Staking closes once the match has started or if the amounts differ. Nobody was charged.";
-export const STAKE_FUNDS_MESSAGE = 'Not enough test MON to cover this stake.';
+export const STAKE_FUNDS_MESSAGE = `Not enough ${COIN} to cover this stake.`;
 export const OPPONENT_UNSTAKED_MESSAGE = 'Your opponent did not stake. Your stake will be returned.';
 
 export const STAKE_UNREADABLE_MESSAGE = "Couldn't check the match right now. Nothing was sent. Try again in a moment.";

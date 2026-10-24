@@ -3,6 +3,10 @@ import { ApiError, NetworkError, TimeoutError, isTransient } from './api';
 import { InsufficientFundsError } from './flows';
 import { StakeFundsError } from './stakeFlows';
 import type { DuelStatus } from './types';
+import { IS_MAINNET } from './network';
+
+/** Mainnet players hold real MON; testnet copy keeps saying test MON. */
+const COIN = IS_MAINNET ? 'MON' : 'test MON';
 
 export type AgentRefusalReason = 'busy' | 'reserved' | 'not_open' | 'stale' | 'limit_ip';
 
@@ -34,7 +38,7 @@ function revertedMessage(fn: string, duelStatus?: DuelStatus): string {
 }
 
 function relayMessage(reason: string): string {
-  if (reason === 'balance') return 'Not enough test MON.';
+  if (reason === 'balance') return `Not enough ${COIN}.`;
   if (RATE_LIMITED.test(reason)) return 'Too many requests. Wait a moment.';
   return 'The network rejected that. Try again.';
 }
@@ -77,7 +81,7 @@ function isRevertedResult(err: unknown): err is { status: 'reverted'; fn?: unkno
 function fundMessage(err: FundError): string {
   return err.reason === 'disabled'
     ? 'Test MON is off right now. Ask the host to enable it.'
-    : 'The test MON faucet is busy. Try again in a minute.';
+    : `The ${COIN} faucet is busy. Try again in a minute.`;
 }
 
 /** Maps anything a player action can throw or return to `friendlyError`. */
@@ -88,8 +92,8 @@ export function toFriendly(err: unknown, ctx: ErrorContext): string {
   }
   if (err instanceof FundError) return fundMessage(err);
   if (err instanceof MaybeLandedError) return friendlyError({ kind: 'uncertain', fn: err.fn });
-  if (err instanceof StakeFundsError) return 'Not enough test MON to stake.';
-  if (err instanceof InsufficientFundsError) return 'Not enough test MON for another pull.';
+  if (err instanceof StakeFundsError) return `Not enough ${COIN} to stake.`;
+  if (err instanceof InsufficientFundsError) return `Not enough ${COIN} for another pull.`;
   if (err instanceof NetworkError || err instanceof TimeoutError) return friendlyError({ kind: 'network' });
   if (err instanceof ApiError && err.status >= 500 && isTransient(err)) return friendlyError({ kind: 'network' });
   if (err instanceof ApiError) return friendlyError({ kind: 'relay', reason: err.reason });
