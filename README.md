@@ -20,6 +20,17 @@ Built in one day at **Monad Blitz Jogja Vol. 2** (24 October 2026) by a solo bui
 
 To play a friend, tap **Create match**, and let them scan the QR code.
 
+### Pages
+
+| Path | What it is |
+|---|---|
+| `/` | Landing page: how to play, live block and stats, why Monad, event mode for organisers |
+| `/battle` | Card Battle lobby: fight the AI Agent, create a match (QR) or join one |
+| `/battle/:id` | The match board: hand, three-slot board, Attack and Special |
+| `/play` | Tap Blitz lobby, your card, paid pulls |
+| `/pull` | Gacha reveal (free first pull, odds shown) |
+| `/arena` | Projector view: live matches, tx feed with MonadScan links, stats, QR to join |
+
 ## How a battle works
 
 - **Draw pile:** each player has a face-down pile of 10 cards, **generated onchain as they are drawn** (element, rarity, ATK, HP). Cards are temporary and unrelated to the NFTs you own, so anyone can play instantly.
@@ -68,6 +79,16 @@ pnpm -F server test                 # server
 pnpm -F @nad/web test               # web
 ```
 
+## Run against Monad testnet
+
+To use the deployed testnet contracts with your own keys:
+
+1. `cp .env.example .env` and fill `MASTER_KEY` (funds burners and bots), `OPERATOR_KEY` (relay), `AGENT_KEY` (AI Agent wallet), `ADMIN_TOKEN`, and `RPC_URLS` (e.g. `https://testnet-rpc.monad.xyz`). Leave `DEPLOYMENT` empty for testnet. Fund the three wallets with testnet MON from the [Monad faucet](https://faucet.monad.xyz).
+2. `pnpm install`
+3. `bash server/scripts/serve.sh` builds the web app, then serves the API, WebSocket and the web app on `PORT` (default 8080).
+
+To deploy fresh contracts instead, run the Foundry scripts in `contracts/script/` (`Deploy.s.sol`, `DeployBattle.s.sol`, `DeployStake.s.sol`, `DeployBattleStake.s.sol`) with `--rpc-url https://testnet-rpc.monad.xyz --broadcast`, then write the addresses to `deployments/testnet.json`.
+
 ## Architecture
 
 ```text
@@ -115,10 +136,16 @@ Unit cost: one Card Battle action costs about 101,000 gas, roughly 0.01 MON at 1
 - **An AI Agent with its own wallet** that plays through the same relay as everyone else.
 - **Original IP.** The Nadmon roster is our own design.
 
+## Media
+
+- **Showreel / ad video:** `marketing/showreel/monicard-battle-ad-1920x1080-60fps.mp4` (landscape) and `monicard-battle-ad-1080x1920-60fps.mp4` (vertical), rendered from `marketing/showreel/battle.html`.
+- **Pitch script:** `marketing/pitch.md`.
+- **Specs:** `docs/BATTLE-SPEC.md` (Card Battle rules and contract), `docs/design-system/` (brand book, tokens, Nadmon art).
+
 ## Roadmap
 
 Sponsor-funded tournament escrow, verifiable randomness (VRF), embedded-wallet login, ERC-8004 identity for the AI Agent, a native card marketplace, and a learning loop for the Card Battle agent.
 
 ## License
 
-MIT
+MIT, see [LICENSE](LICENSE).
