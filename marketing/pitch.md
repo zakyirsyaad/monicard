@@ -24,7 +24,7 @@ Prinsip: hanya demo fitur yang sudah terbukti jalan di HP (rubrik "all announced
 [Pakai Special sekali.]
 > "Special doubles my damage, once per match. Two KOs win."
 [Klik tx terbaru → MonadScan, kembali.]
-> "Each of these moves is a real transaction, about a cent of testnet MON, and the board moves at Monad speed."
+> "Each of these moves is a real transaction, about 0.01 MON in gas, and the board moves at Monad speed."
 
 **1:50 – 2:10 · AI Agent**
 [Tunjuk panel agent: level dan pelajaran terbaru.]
