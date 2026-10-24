@@ -27,20 +27,23 @@ function main(): void {
   const blitzArena = loadArtifact('BlitzArena');
   const stakeVault = loadArtifact('StakeVault');
   const cardBattle = loadArtifact('CardBattle');
+  const battleStakeVault = loadArtifact('BattleStakeVault');
 
   const abiSource =
     HEADER +
     `export const nadCardsAbi = ${JSON.stringify(nadCards.abi, null, 2)} as const;\n\n` +
     `export const blitzArenaAbi = ${JSON.stringify(blitzArena.abi, null, 2)} as const;\n\n` +
     `export const stakeVaultAbi = ${JSON.stringify(stakeVault.abi, null, 2)} as const;\n\n` +
-    `export const battleAbi = ${JSON.stringify(cardBattle.abi, null, 2)} as const;\n`;
+    `export const battleAbi = ${JSON.stringify(cardBattle.abi, null, 2)} as const;\n\n` +
+    `export const battleStakeVaultAbi = ${JSON.stringify(battleStakeVault.abi, null, 2)} as const;\n`;
 
   const bytecodeSource =
     HEADER +
     `export const nadCardsBytecode = '${nadCards.bytecode.object}' as const;\n\n` +
     `export const blitzArenaBytecode = '${blitzArena.bytecode.object}' as const;\n\n` +
     `export const stakeVaultBytecode = '${stakeVault.bytecode.object}' as const;\n\n` +
-    `export const battleBytecode = '${cardBattle.bytecode.object}' as const;\n`;
+    `export const battleBytecode = '${cardBattle.bytecode.object}' as const;\n\n` +
+    `export const battleStakeVaultBytecode = '${battleStakeVault.bytecode.object}' as const;\n`;
 
   writeFileSync(`${sharedSrc}abi.ts`, abiSource);
   writeFileSync(`${sharedSrc}bytecode.ts`, bytecodeSource);
