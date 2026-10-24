@@ -134,13 +134,20 @@ export function Home() {
           </p>
         )}
         <h1 className="display">Monicard</h1>
-        <p className="body text-ink-muted">Real-time 1v1 card duels on Monad testnet.</p>
+        <p className="body text-ink-muted">Onchain card battles on Monad. Play instantly, no wallet needed.</p>
       </header>
       <Hero />
       <OddsTable />
       <div className="mt-auto flex flex-col gap-3">
         {error && <Notice>{error}</Notice>}
-        <Button busy={busy} busyLabel="Pulling…" disabled={!config || !accountLoaded} onClick={() => void pull()}>
+        <Button onClick={() => navigate('/battle')}>Play Card Battle</Button>
+        <Button
+          variant="secondary"
+          busy={busy}
+          busyLabel="Pulling…"
+          disabled={!config || !accountLoaded}
+          onClick={() => void pull()}
+        >
           {cta}
         </Button>
       </div>
