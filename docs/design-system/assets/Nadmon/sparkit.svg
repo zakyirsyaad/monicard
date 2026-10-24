@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" width="240" height="150" role="img" aria-label="Sparkit">
+<title>Sparkit</title>
+<rect width="240" height="150" fill="#fbf3d6"/>
+<rect y="118" width="240" height="32" fill="#f2cc4d" opacity=".3"/>
+
+<path d="M120 58 L120 40" stroke="#200052" stroke-width="3" stroke-linecap="round"/><polyline points="124,18 114,32 124,32 116,46" fill="none" stroke="#200052" stroke-width="7" stroke-linejoin="round" stroke-linecap="round"/><polyline points="124,18 114,32 124,32 116,46" fill="none" stroke="#f2cc4d" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/><circle cx="120" cy="88" r="30" fill="#e4dfff" stroke="#200052" stroke-width="3"/><ellipse cx="110.7" cy="86.6" rx="5.1" ry="6.4" fill="#200052"/><circle cx="112.4" cy="84.0" r="1.9" fill="#ffffff"/><ellipse cx="129.3" cy="86.6" rx="5.1" ry="6.4" fill="#200052"/><circle cx="131.0" cy="84.0" r="1.9" fill="#ffffff"/><circle cx="103.0" cy="96.8" r="3.8" fill="#a0055d" opacity=".5"/><circle cx="137.0" cy="96.8" r="3.8" fill="#a0055d" opacity=".5"/><path d="M114.9 95.1 Q120.0 100.2 125.1 95.1" fill="none" stroke="#200052" stroke-width="2.2" stroke-linecap="round"/><ellipse cx="106" cy="118" rx="9" ry="4.5" fill="#e4dfff" stroke="#200052" stroke-width="3"/><ellipse cx="134" cy="118" rx="9" ry="4.5" fill="#e4dfff" stroke="#200052" stroke-width="3"/>
+</svg>

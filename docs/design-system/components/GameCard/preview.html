@@ -1,0 +1,46 @@
+<!-- @dsCard group="Koleksi" height=620 subtitle="Full (meniru SVG server, Epic Voltnad) dan compact" -->
+<!doctype html>
+<html><head><meta charset="utf-8"><title>GameCard</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>
+body{margin:0;background:var(--surface);color:var(--ink);font-family:var(--font-sans);padding:16px;display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px;align-items:start}
+.card{width:300px;box-sizing:border-box;background:var(--surface-raised);border:3px solid var(--rarity-epic);border-radius:14px;padding:12px;display:grid;gap:6px}
+.stg{font:600 10px/14px var(--font-sans);letter-spacing:.06em;color:var(--ink-muted)}
+.hd{display:flex;align-items:baseline;gap:8px}
+.nm{font:800 24px/28px var(--font-sans);letter-spacing:-.01em}
+.hp{margin-left:auto;font:600 13px/18px var(--font-mono)}
+.chips{display:flex;gap:6px}
+.chip{padding:2px 7px;border-radius:var(--radius-sm);background:var(--purple-tint);font:600 10px/16px var(--font-sans);letter-spacing:.06em}
+.art{display:block;width:100%;aspect-ratio:8/5;border:2px solid var(--element-lightning);border-radius:8px;box-sizing:border-box}
+.meta{font:400 10px/14px var(--font-sans);color:var(--ink-muted);text-align:center}
+.atk{display:grid;grid-template-columns:1fr auto;padding:6px 0;border-top:1px solid var(--line)}
+.an{font:600 15px/20px var(--font-sans)} .av{font:600 18px/22px var(--font-mono);font-variant-numeric:tabular-nums}
+.ad{grid-column:1/3;font:400 11px/15px var(--font-sans);color:var(--ink-muted)}
+.wk{display:grid;grid-template-columns:repeat(3,1fr);padding-top:6px;border-top:1px solid var(--line);font:400 10px/14px var(--font-sans);color:var(--ink-muted)}
+.wk b{display:block;color:var(--ink);font-weight:600;font-size:12px}
+.fl{border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+.gt{font:600 12px/16px var(--font-sans);margin:0 0 2px} .lo{font:400 11px/16px var(--font-sans);color:var(--ink-muted);margin:0}
+.ft{display:flex;justify-content:space-between;font:500 10px/14px var(--font-mono);color:var(--ink-muted)}
+.cp{display:flex;align-items:center;gap:var(--space-3);height:72px;padding:0 var(--space-3);box-sizing:border-box;background:var(--surface-raised);border:2px solid;border-radius:var(--radius-md);margin-bottom:12px}
+.cp img{width:64px;height:40px;border-radius:var(--radius-sm)}
+.cp .t{font:600 18px/24px var(--font-sans)} .cp .d{margin-left:auto;font:500 13px/18px var(--font-mono)}
+.cp .chip{font-size:12px;line-height:16px}
+</style></head><body>
+<div class="card">
+  <span class="stg">STAGE 2</span>
+  <div class="hd"><span class="nm">Voltnad</span><span class="hp">HP 1,950</span></div>
+  <div class="chips"><span class="chip" style="color:var(--element-lightning)">LIGHTNING</span><span class="chip" style="color:var(--purple-ink)">EPIC</span></div>
+  <img class="art" src="../../assets/Nadmon/voltnad.svg" alt="Voltnad">
+  <div class="meta">Lightning · from Sparkit · Block #73,562,481</div>
+  <div class="atk"><span class="an">Tap</span><span class="av">15</span><span class="ad">Damage per tap. ×1.5 vs Water.</span></div>
+  <div class="atk"><span class="an">Last stand</span><span class="av">150–750</span><span class="ad">Once per duel, at neutral element.</span></div>
+  <div class="wk"><div>Strong vs<b>Water</b></div><div>Weak to<b>Fire</b></div><div>Record<b>12 W · 4 L</b></div></div>
+  <div class="fl"><p class="gt">Rider of the Blitz</p><p class="lo">Forged in the lightning of block 73,562,481. Never waits for the next block.</p></div>
+  <div class="ft"><span>Blitz Jogja · 204</span><span>◆◆ Epic</span></div>
+</div>
+<div>
+  <div class="cp" style="border-color:var(--rarity-legendary)"><img src="../../assets/Nadmon/abyssnad.svg" alt="Abyssnad"><span class="t">Abyssnad</span><span class="chip" style="color:var(--element-water)">WATER</span><span class="d">ATK 17</span></div>
+  <div class="cp" style="border-color:var(--rarity-rare)"><img src="../../assets/Nadmon/sparkit.svg" alt="Sparkit"><span class="t">Sparkit</span><span class="chip" style="color:var(--element-lightning)">LIGHTNING</span><span class="d">ATK 12</span></div>
+  <div class="cp" style="border-color:var(--rarity-common)"><img src="../../assets/Nadmon/embrit.svg" alt="Embrit"><span class="t">Embrit</span><span class="chip" style="color:var(--element-fire)">FIRE</span><span class="d">ATK 11</span></div>
+</div>
+</body></html>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" width="240" height="150" role="img" aria-label="Dripnad">
+<title>Dripnad</title>
+<rect width="240" height="150" fill="#e3f0ff"/>
+<rect y="118" width="240" height="32" fill="#6cb8ff" opacity=".3"/>
+
+<path d="M120 30 C100.8 58.7 88.0 71.0 88.0 89.03999999999999 C88.0 112 105.92 118.56 120 118.56 C134.08 118.56 152.0 112 152.0 89.03999999999999 C152.0 71.0 139.2 58.7 120 30 Z" fill="#dcebff" stroke="#200052" stroke-width="3"/><ellipse cx="106" cy="66" rx="4" ry="8" fill="#ffffff" transform="rotate(25 106 66)"/><ellipse cx="110.7" cy="88.6" rx="5.1" ry="6.4" fill="#200052"/><circle cx="112.4" cy="86.0" r="1.9" fill="#ffffff"/><ellipse cx="129.3" cy="88.6" rx="5.1" ry="6.4" fill="#200052"/><circle cx="131.0" cy="86.0" r="1.9" fill="#ffffff"/><circle cx="103.0" cy="98.8" r="3.8" fill="#a0055d" opacity=".5"/><circle cx="137.0" cy="98.8" r="3.8" fill="#a0055d" opacity=".5"/><path d="M114.9 97.1 Q120.0 102.2 125.1 97.1" fill="none" stroke="#200052" stroke-width="2.2" stroke-linecap="round"/><ellipse cx="106" cy="120" rx="9" ry="4.5" fill="#dcebff" stroke="#200052" stroke-width="3"/><ellipse cx="134" cy="120" rx="9" ry="4.5" fill="#dcebff" stroke="#200052" stroke-width="3"/>
+</svg>

@@ -1,0 +1,52 @@
+<!-- @dsCard height=288 -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NadGacha</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;800&display=swap">
+<style>
+  html, body { margin:0; height:100%; }
+  body { background:var(--surface); color:var(--ink); font-family:var(--font-sans); overflow:hidden; }
+  .cover { position:relative; width:960px; height:288px; overflow:hidden; }
+  .art { position:absolute; top:0; left:480px; width:480px; height:288px; overflow:hidden; }
+  .art svg { display:block; width:480px; height:288px; }
+  .deep { fill:var(--deep); }
+  .inkb { fill:var(--ink); }
+  .brand { fill:var(--purple); }
+  .berry { fill:var(--berry); }
+  .cut { fill:var(--surface); rx:var(--radius-sm); }
+  .blk { rx:var(--radius-md); }
+  .words { position:absolute; left:var(--space-8); bottom:var(--space-8); max-width:440px; }
+  .name { margin:0; font-size:88px; line-height:.92; font-weight:800; letter-spacing:-.03em; color:var(--ink); }
+  .tag { margin:var(--space-2) 0 0 4px; font-size:14px; line-height:20px; color:var(--ink-muted); }
+</style>
+</head>
+<body>
+<div class="cover">
+<div class="art" aria-hidden="true">
+<svg viewBox="0 0 480 288" width="480" height="288">
+<!--
+  blocks      purple 208x320 slab bled off top and bottom (identity), deep 112x176, ink 112x112 bled off bottom, berry 144x128 bled off the right edge
+  arrangement one tall slab with satellites; gaps space-4 (16px); corners radius-md
+  pattern     HP-bar pills cut out of the purple slab in surface: five 16px bars of unequal length, because the HP bar is the one shape every duel screen is built around
+  scales      gap space-4, pill pitch 40px (space-6 + space-4), pill rx radius-sm (half of 16px), block rx radius-md
+-->
+  <rect class="deep blk" x="0" y="0" width="112" height="176"/>
+  <rect class="inkb blk" x="0" y="192" width="112" height="112"/>
+  <rect class="brand blk" x="128" y="-16" width="208" height="320"/>
+  <rect class="cut" x="152" y="48" width="160" height="16"/>
+  <rect class="cut" x="152" y="88" width="112" height="16"/>
+  <rect class="cut" x="152" y="128" width="136" height="16"/>
+  <rect class="cut" x="152" y="168" width="72" height="16"/>
+  <rect class="cut" x="152" y="208" width="152" height="16"/>
+  <rect class="berry blk" x="352" y="0" width="144" height="128"/>
+</svg>
+</div>
+<div class="words">
+  <p class="name">NadGacha</p>
+  <p class="tag">Real-time 1v1 card duels on Monad testnet.</p>
+</div>
+</div>
+</body>
+</html>

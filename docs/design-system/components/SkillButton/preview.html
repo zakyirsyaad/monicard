@@ -1,0 +1,15 @@
+<!-- @dsCard group="Duel" height=160 subtitle="Siap dan terpakai" -->
+<!doctype html>
+<html><head><meta charset="utf-8"><title>SkillButton</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>
+body{margin:0;background:var(--surface);font-family:var(--font-sans);padding:16px;display:grid;gap:12px;max-width:380px}
+.sk{display:flex;align-items:center;justify-content:space-between;height:56px;padding:0 16px;border:0;border-radius:var(--radius-md);font:600 18px/24px var(--font-sans);width:100%}
+.sk.ready{background:var(--deep);color:var(--on-deep);cursor:pointer}
+.sk.used{background:var(--surface-sunken);color:var(--ink-muted)}
+.sk b{font:600 22px/26px var(--font-mono);font-variant-numeric:tabular-nums}
+.sk:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+</style></head><body>
+<button class="sk ready">Last stand <b>380 dmg</b></button>
+<button class="sk used" disabled>Skill used <b>—</b></button>
+</body></html>

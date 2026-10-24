@@ -1,0 +1,19 @@
+<!-- @dsCard group="Duel" height=170 subtitle="Lawan dan pemain, dengan damage in-flight" -->
+<!doctype html>
+<html><head><meta charset="utf-8"><title>HpBar</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>
+body{margin:0;background:var(--surface);color:var(--ink);font-family:var(--font-sans);padding:16px;display:grid;gap:20px;max-width:420px}
+.top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.nm{font:600 18px/24px var(--font-sans)}
+.num{font:600 22px/26px var(--font-mono);font-variant-numeric:tabular-nums}
+.track{position:relative;height:12px;border-radius:var(--radius-sm);background:var(--surface-sunken);overflow:hidden}
+.fill,.pend{position:absolute;top:0;bottom:0;left:0}
+.opp .fill{background:var(--berry)} .opp .pend{background:var(--berry);opacity:.4}
+.self .fill{background:var(--purple)}
+</style></head><body>
+<div class="opp"><div class="top"><span class="nm">AI Agent · Lv.4</span><span class="num" style="color:var(--berry)">722 / 1,900</span></div>
+<div class="track"><span class="pend" style="width:43%"></span><span class="fill" style="width:38%"></span></div></div>
+<div class="self"><div class="top"><span class="nm">You</span><span class="num">1,420 / 1,950</span></div>
+<div class="track"><span class="fill" style="width:73%"></span></div></div>
+</body></html>
