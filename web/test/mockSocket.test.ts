@@ -120,7 +120,7 @@ describe('mock api', () => {
       pullPrice: '50000000000000000',
       event: { name: 'NadGacha BlitzArena', sponsor: 'Monad Blitz Jogja' },
     });
-    expect(config.bots).toHaveLength(1);
+    expect(config.bots.length).toBeGreaterThanOrEqual(1);
 
     expect(await api.getAccount(ALICE)).toEqual({ nonce: 0, balance: '0', cardId: null, hasPulled: false });
     expect(await api.fund(ALICE)).toMatchObject({ funded: true });

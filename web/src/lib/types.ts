@@ -2,6 +2,7 @@ import type { Hex } from 'viem';
 import type { DuelStatus, DuelView } from '@nad/shared';
 
 // Frozen interface contract (HTTP API + WebSocket). Do not add fields.
+// Approved addition: optional `StatsMsg.lastTxHash` (the server may never send it).
 
 export type Config = {
   chainId: 10143;
@@ -104,6 +105,8 @@ export type StatsMsg = {
   totalDuels: number;
   /** wei */
   treasury: string;
+  /** Most recent onchain tx the server relayed. Optional: render nothing when absent. */
+  lastTxHash?: Hex;
 };
 
 export type LeaderboardMsg = { type: 'leaderboard'; entries: LeaderboardEntry[] };

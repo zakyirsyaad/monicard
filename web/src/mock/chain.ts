@@ -65,6 +65,9 @@ const FRIEND_SKILL_THRESHOLD = 40;
 const FRIEND_MIN_RATE = 5;
 const FRIEND_RATE_SPAN = 5; // 5..9 taps per second
 const TAPS_PER_SECOND_BLOCKS = 0.9; // seconds covered by one bot interval (3 blocks)
+const SHOWCASE_LANE_STAGGER_BLOCKS = 4; // lane i starts i * 4 blocks after the showcase starts
+const SHOWCASE_PAUSE_BLOCKS = 20; // a settled showcase duel stays on screen ~6 s before its lane restarts
+const SHOWCASE_LATENCY_STEP = 37;
 
 const CONFIG: Config = {
   chainId: CHAIN_ID,
@@ -85,15 +88,31 @@ const CONFIG: Config = {
   pullPrice: PULL_PRICE.toString(),
   event: { name: 'NadGacha BlitzArena', sponsor: 'Monad Blitz Jogja' },
   agent: '0x00000000000000000000000000000000000000a9',
-  bots: ['0x00000000000000000000000000000000000000b1'],
+  // bots[0] is the "friend" that joins open duels; the rest play the projector showcase.
+  bots: [
+    '0x00000000000000000000000000000000000000b1',
+    '0x00000000000000000000000000000000000000b2',
+    '0x00000000000000000000000000000000000000b3',
+    '0x00000000000000000000000000000000000000b4',
+    '0x00000000000000000000000000000000000000b5',
+    '0x00000000000000000000000000000000000000b6',
+    '0x00000000000000000000000000000000000000b7',
+  ],
 };
+const SHOWCASE_BOT_PAIRS = [
+  [1, 2],
+  [3, 4],
+  [5, 6],
+] as const; // indexes into CONFIG.bots
+const SHOWCASE_GUEST: Hex = '0x00000000000000000000000000000000000ca401'; // not a bot: the featured human
 
 const AGENT_CARD = { element: 1, rarity: 1, atk: 13, hp: 1750 } as const; // Water Rare
 const FRIEND_CARD = { element: 2, rarity: 1, atk: 12, hp: 1700 } as const; // Lightning Rare
 
+type CardStats = { element: number; rarity: number; atk: number; hp: number };
 type Outcome = { status: 'success' | 'reverted'; events: RelayResult['events'] };
 type Id = number | bigint | string;
-type Controller = 'agent' | 'friend';
+type Controller = 'agent' | 'friend' | 'showcase';
 
 type CardRecord = {
   id: number;
@@ -115,7 +134,34 @@ type DuelRuntime = {
   finishedBlock: number | null;
   controller: Controller | null;
   nextActionBlock: number;
+  /** Projector showcase duel: its bots report a synthetic latency. */
+  showcase: boolean;
+  /** The human-like opponent the agent also taps for in the showcase's AI Agent duel. */
+  guest: Hex | null;
 };
+
+/** One looping duel slot of the projector showcase. */
+type ShowcaseLane = {
+  p1: Hex;
+  p2: Hex;
+  stats: readonly [CardStats, CardStats];
+  controller: Controller;
+  guest: Hex | null;
+  duelId: string | null;
+  /** First block at which the lane may (re)start a duel. */
+  startAt: number;
+};
+
+// Varied cards so the projector shows all elements and several rarities.
+const SHOWCASE_GUEST_CARD: CardStats = { element: 2, rarity: 1, atk: 12, hp: 1700 };
+const SHOWCASE_BOT_CARDS: readonly CardStats[] = [
+  { element: 0, rarity: 0, atk: 11, hp: 1550 },
+  { element: 1, rarity: 1, atk: 13, hp: 1650 },
+  { element: 2, rarity: 2, atk: 14, hp: 1800 },
+  { element: 0, rarity: 0, atk: 12, hp: 1500 },
+  { element: 1, rarity: 3, atk: 15, hp: 1900 },
+  { element: 2, rarity: 1, atk: 12, hp: 1600 },
+];
 
 export type MockChainOptions = {
   /** Block interval; 0 disables the timer so tests drive blocks with `tick()`. */
@@ -135,6 +181,11 @@ export type MockChain = {
   /** Stop the block interval and cancel every pending timer. */
   dispose(): void;
   disableAutoFriend(): void;
+  /**
+   * Projector showcase: three bot-vs-bot duel loops plus a looping AI Agent vs guest duel
+   * (the guest is not in `config.bots`, so it is the featured duel). Reference counted; returns stop.
+   */
+  startShowcase(): () => void;
 
   /** Dev/test helpers. */
   credit(address: Hex, wei: bigint): void;
@@ -170,6 +221,10 @@ export type MockChain = {
 
 const keyOf = (a: Hex): string => a.toLowerCase();
 const sameAddress = (a: Hex, b: Hex): boolean => keyOf(a) === keyOf(b);
+const botKeysOnly = new Set(CONFIG.bots.map((b) => b.toLowerCase()));
+/** Bots on both sides: never featured on the projector. */
+const isBotOnly = (d: DuelView): boolean =>
+  botKeysOnly.has(d.p1.toLowerCase()) && botKeysOnly.has(d.p2.toLowerCase());
 const isFinished = (d: DuelView): boolean =>
   d.status === 'P1Won' || d.status === 'P2Won' || d.status === 'Draw';
 const reverted = (): Outcome => ({ status: 'reverted', events: {} });
@@ -191,6 +246,9 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
   const testnet = { duels: 0, wins: 0 };
   let lessons: AgentLesson[] = [];
   let txTotal = 0;
+  let lastTxHash: Hex | null = null;
+  let showcaseRefs = 0;
+  let lanes: ShowcaseLane[] = [];
   const txTimes: number[] = [];
   const latencies: number[] = [];
 
@@ -226,7 +284,7 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
 
   const rollInt = (span: number): number => Math.floor(rng() * span);
 
-  function mint(owner: Hex, stats?: { element: number; rarity: number; atk: number; hp: number }) {
+  function mint(owner: Hex, stats?: CardStats) {
     let rolled = stats;
     if (!rolled) {
       const roll = rollInt(100);
@@ -250,7 +308,7 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
   }
 
   /** Bot cards are minted on first use so player token ids still start at 1. */
-  function botCard(address: Hex, stats: typeof AGENT_CARD | typeof FRIEND_CARD): CardRecord {
+  function botCard(address: Hex, stats: CardStats): CardRecord {
     const existing = cardOfMap.get(keyOf(address));
     const found = existing === undefined ? undefined : cards.get(existing);
     return found ?? mint(address, stats);
@@ -258,8 +316,9 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
 
   const runtime = (id: Id): DuelRuntime | null => duelList[Number(id)] ?? null;
 
-  function countTx(latencyMs?: number): void {
+  function countTx(latencyMs?: number, hash?: Hex): void {
     txTotal += 1;
+    lastTxHash = hash ?? keccak256(stringToHex(`mock-tx:${txTotal}`));
     txTimes.push(now());
     if (latencyMs !== undefined) {
       latencies.push(latencyMs);
@@ -337,6 +396,8 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
       finishedBlock: null,
       controller: null,
       nextActionBlock: 0,
+      showcase: false,
+      guest: null,
     });
     if (!botKeys.has(keyOf(sender))) scheduleFriend(id);
     return ok({ duelId: id });
@@ -474,6 +535,16 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
     }
   }
 
+  function actorsOf(rt: DuelRuntime): Hex[] {
+    if (rt.controller === 'agent') return rt.guest ? [CONFIG.agent, rt.guest] : [CONFIG.agent];
+    if (rt.controller === 'friend') return [friendAddress];
+    return [rt.view.p1, rt.view.p2];
+  }
+
+  /** Deterministic stand-in for the relay latency so the showcase fills the latency stat. */
+  const syntheticLatency = (): number =>
+    RELAY_LATENCY_MIN_MS + ((txTotal * SHOWCASE_LATENCY_STEP) % RELAY_LATENCY_SPAN_MS);
+
   function botTurn(rt: DuelRuntime): void {
     const d = rt.view;
     if (!rt.controller || d.status !== 'Active') return;
@@ -481,16 +552,85 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
     if (block >= d.endBlock - NO_SEND_MARGIN) return;
     rt.nextActionBlock = block + BOT_INTERVAL_BLOCKS;
 
-    const sender = rt.controller === 'agent' ? CONFIG.agent : friendAddress;
-    const taps =
-      rt.controller === 'agent'
+    for (const sender of actorsOf(rt)) {
+      if (isFinished(d)) break;
+      const isAgent = sameAddress(sender, CONFIG.agent);
+      const taps = isAgent
         ? AGENT_BASE_TAPS + rollInt(2)
         : Math.round((FRIEND_MIN_RATE + rollInt(FRIEND_RATE_SPAN)) * TAPS_PER_SECOND_BLOCKS);
-    const hp = sameAddress(sender, d.p1) ? d.hp1 : d.hp2;
-    const maxHp = sameAddress(sender, d.p1) ? d.maxHp1 : d.maxHp2;
-    const threshold = rt.controller === 'agent' ? agentThreshold : FRIEND_SKILL_THRESHOLD;
-    attack(sender, d.id, taps, hp * 100 <= threshold * maxHp);
+      const hp = sameAddress(sender, d.p1) ? d.hp1 : d.hp2;
+      const maxHp = sameAddress(sender, d.p1) ? d.maxHp1 : d.maxHp2;
+      const threshold = isAgent ? agentThreshold : FRIEND_SKILL_THRESHOLD;
+      attack(sender, d.id, taps, hp * 100 <= threshold * maxHp);
+      countTx(rt.showcase ? syntheticLatency() : undefined);
+    }
+  }
+
+  // ---- projector showcase ----
+
+  function buildLanes(): ShowcaseLane[] {
+    const agentLane: ShowcaseLane = {
+      p1: SHOWCASE_GUEST,
+      p2: CONFIG.agent,
+      stats: [SHOWCASE_GUEST_CARD, AGENT_CARD],
+      controller: 'agent',
+      guest: SHOWCASE_GUEST,
+      duelId: null,
+      startAt: block,
+    };
+    const botLanes = SHOWCASE_BOT_PAIRS.map(([a, b], i): ShowcaseLane => ({
+      p1: CONFIG.bots[a] as Hex,
+      p2: CONFIG.bots[b] as Hex,
+      stats: [SHOWCASE_BOT_CARDS[a - 1] as CardStats, SHOWCASE_BOT_CARDS[b - 1] as CardStats],
+      controller: 'showcase',
+      guest: null,
+      duelId: null,
+      startAt: block + (i + 1) * SHOWCASE_LANE_STAGGER_BLOCKS,
+    }));
+    return [agentLane, ...botLanes];
+  }
+
+  function launchLane(lane: ShowcaseLane): void {
+    const first = botCard(lane.p1, lane.stats[0]);
+    const second = botCard(lane.p2, lane.stats[1]);
+    const created = createDuel(lane.p1, first.id);
+    const duelId = created.events.duelId;
+    if (duelId === undefined) return;
     countTx();
+    if (joinDuel(lane.p2, duelId, second.id).status !== 'success') return;
+    countTx();
+    const rt = runtime(duelId);
+    if (!rt) return;
+    rt.controller = lane.controller;
+    rt.showcase = true;
+    rt.guest = lane.guest;
+    lane.duelId = duelId;
+  }
+
+  function showcaseSweep(): void {
+    if (showcaseRefs === 0) return;
+    for (const lane of lanes) {
+      if (lane.duelId !== null) {
+        if (!runtime(lane.duelId)?.view.settled) continue;
+        lane.duelId = null;
+        lane.startAt = block + SHOWCASE_PAUSE_BLOCKS;
+      }
+      if (block < lane.startAt) continue;
+      if (lane.controller === 'agent' && agentBusy()) continue; // a real challenge has the agent
+      launchLane(lane);
+    }
+  }
+
+  function startShowcase(): () => void {
+    showcaseRefs += 1;
+    if (lanes.length === 0) lanes = buildLanes();
+    showcaseSweep();
+    let stopped = false;
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      showcaseRefs -= 1;
+    };
   }
 
   // ---- clock ----
@@ -502,6 +642,7 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
     }
     duelList.forEach(botTurn);
     settleSweep();
+    showcaseSweep();
     blockSubs.forEach((fn) => fn(block));
   }
 
@@ -570,9 +711,10 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
     const result = new Promise<RelayResult>((resolve) => {
       later(() => {
         const outcome = checked.run();
-        countTx(latencyMs);
+        const hash = keccak256(rawTx);
+        countTx(latencyMs, hash);
         resolve({
-          hash: keccak256(rawTx),
+          hash,
           status: outcome.status,
           latencyMs,
           blockNumber: String(block),
@@ -661,7 +803,9 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
         ? [wanted]
         : []
       : duelList.slice(-SNAPSHOT_DUELS);
-    const active = [...picked].reverse().find((rt) => rt.view.status === 'Active');
+    const active = [...picked]
+      .reverse()
+      .find((rt) => rt.view.status === 'Active' && !isBotOnly(rt.view));
     return {
       type: 'duels',
       block: String(block),
@@ -684,6 +828,7 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
       uniquePlayers: 0,
       totalDuels: 0,
       treasury: treasury.toString(),
+      ...(lastTxHash === null ? {} : { lastTxHash }),
     };
   }
 
@@ -718,7 +863,10 @@ export function createMockChain(opts: MockChainOptions = {}): MockChain {
       timers.clear();
       blockSubs.clear();
       agentSubs.clear();
+      lanes = [];
+      showcaseRefs = 0;
     },
+    startShowcase,
     disableAutoFriend() {
       autoFriend = false;
     },

@@ -11,8 +11,17 @@ function scopeOf(url: string): string {
   }
 }
 
+export type MockSocketOptions = {
+  /** Start the projector showcase while a `scope=all` socket is open. */
+  showcase?: boolean;
+};
+
 /** Socket-like stand-in for `/ws?scope=...` driven by the mock chain. Never sends `leaderboard`. */
-export function createMockSocket(url: string, chain: MockChain = getMockChain()): WebSocketLike {
+export function createMockSocket(
+  url: string,
+  chain: MockChain = getMockChain(),
+  options: MockSocketOptions = {},
+): WebSocketLike {
   const scope = scopeOf(url);
   let open = false;
   let closed = false;
@@ -46,6 +55,7 @@ export function createMockSocket(url: string, chain: MockChain = getMockChain())
   queueMicrotask(() => {
     if (closed) return;
     open = true;
+    if (options.showcase && scope === 'all') unsubscribers.push(chain.startShowcase());
     socket.onopen?.({});
     send(chain.duelsMsg(scope));
     send(chain.statsMsg());

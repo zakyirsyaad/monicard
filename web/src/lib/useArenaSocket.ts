@@ -8,6 +8,7 @@ import {
   reduceArena,
 } from './arenaState';
 import type { WsMessage } from './types';
+import { getMockChain } from '../mock/chain';
 import { createMockSocket } from '../mock/socket';
 
 export type ArenaScope = 'all' | { duelId: string };
@@ -16,7 +17,9 @@ export type ArenaSocket = ArenaState & { connected: boolean };
 type SocketFactory = (url: string) => WebSocketLike;
 
 const defaultFactory: SocketFactory = (url) =>
-  import.meta.env.VITE_USE_MOCK === '1' ? createMockSocket(url) : (new WebSocket(url) as WebSocketLike);
+  import.meta.env.VITE_USE_MOCK === '1'
+    ? createMockSocket(url, getMockChain(), { showcase: true })
+    : (new WebSocket(url) as WebSocketLike);
 
 let socketFactory: SocketFactory = defaultFactory;
 
