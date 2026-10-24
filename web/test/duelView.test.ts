@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Hex } from 'viem';
 import {
   countdownSeconds,
+  lostJoinRace,
   mySide,
   opponentOf,
   outcome,
@@ -145,5 +146,19 @@ describe('secondsLeft', () => {
   it('is 0 at or after endBlock', () => {
     expect(secondsLeft(177, 177)).toBe(0);
     expect(secondsLeft(177, 200)).toBe(0);
+  });
+});
+
+describe('lostJoinRace', () => {
+  it('is true when a visitor who saw the join view is now a spectator', () => {
+    expect(lostJoinRace('spectator', true)).toBe(true);
+  });
+  it('is false for a spectator who never saw the join view', () => {
+    expect(lostJoinRace('spectator', false)).toBe(false);
+  });
+  it('is false for any other view', () => {
+    expect(lostJoinRace('join', true)).toBe(false);
+    expect(lostJoinRace('countdown', true)).toBe(false);
+    expect(lostJoinRace('ended', true)).toBe(false);
   });
 });

@@ -52,7 +52,8 @@ function Summary({ duel, side, stats }: { duel: DuelView; side: Side; stats: TxS
 }
 
 function Record({ duel, side }: { duel: DuelView; side: Side }) {
-  const card = useCard(String(sideStats(duel, side).card), duel.settled);
+  // Fetched only once settled, so the record already includes this duel.
+  const card = useCard(duel.settled ? String(sideStats(duel, side).card) : null);
   if (!duel.settled) return <p className="body text-ink-muted">Recording result onchain…</p>;
   if (!card) return null;
   return <p className="data text-ink">Record {formatRecord(card.wins, card.losses)}</p>;

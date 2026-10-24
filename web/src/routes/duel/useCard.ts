@@ -5,11 +5,8 @@ import type { NadgachaCard } from '../../lib/types';
 const RETRY_MS = 1000;
 const MAX_ATTEMPTS = 6;
 
-/**
- * Card data from `GET /card/:id` (`nadgacha`). Retries while the card is unknown or still bare-forging.
- * Change `refreshKey` to fetch again (e.g. the record after the duel settled).
- */
-export function useCard(id: string | null, refreshKey: unknown = null): NadgachaCard | null {
+/** Card data from `GET /card/:id` (`nadgacha`); `null` id fetches nothing. Retries while unknown or bare-forging. */
+export function useCard(id: string | null): NadgachaCard | null {
   const [card, setCard] = useState<NadgachaCard | null>(null);
 
   useEffect(() => {
@@ -35,7 +32,7 @@ export function useCard(id: string | null, refreshKey: unknown = null): Nadgacha
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [id, refreshKey]);
+  }, [id]);
 
   return card;
 }

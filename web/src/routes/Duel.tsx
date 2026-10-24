@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
-import { mySide, opponentOf, phase, sameAddress } from '../lib/duelView';
+import { lostJoinRace, mySide, opponentOf, phase, sameAddress } from '../lib/duelView';
 import type { Side } from '../lib/duelView';
-import { toFriendly } from '../lib/errors';
+import { friendlyError, toFriendly } from '../lib/errors';
 import { shortHex } from '../lib/format';
 import { burnerAccount } from '../lib/player';
 import { RETURN_TO_KEY } from '../lib/returnTo';
-import type { AgentMsg, Config, DuelStatus, DuelView } from '../lib/types';
+import type { AgentMsg, Config, DuelView } from '../lib/types';
 import { useArenaSocket } from '../lib/useArenaSocket';
 import { useConfig } from '../lib/useConfig';
 import { Battle } from './duel/Battle';
@@ -21,6 +21,7 @@ import type { DuelEngine } from './duel/useDuelEngine';
 import { useWakeLock } from './duel/useWakeLock';
 
 const NOT_FOUND_MS = 5000;
+const JOIN_RACE_LOST = friendlyError({ kind: 'reverted', fn: 'joinDuel', duelStatus: 'Active' });
 
 type CardState = { cardId: string | null; error: string | null };
 
@@ -124,10 +125,11 @@ function Duel({ id }: { id: string }) {
   const duelEngine = useDuelEngine({ duelId: id, duel, block: socket.block, side, config });
   useWakeLock(view === 'countdown' || view === 'battle');
 
-  const statusRef = useRef<DuelStatus | undefined>(undefined);
+  // Remember the join screen: if the duel then leaves Open without us, we lost the race to join.
+  const [sawJoinView, setSawJoinView] = useState(false);
   useEffect(() => {
-    statusRef.current = duel?.status;
-  }, [duel?.status]);
+    if (view === 'join') setSawJoinView(true);
+  }, [view]);
 
   if (player.error) return <Message text={player.error} back />;
   if (notFound) return <Message text="This duel doesn't exist." back />;
@@ -149,7 +151,8 @@ function Duel({ id }: { id: string }) {
   }
   if (view === 'waiting') return <WaitingRoom duelId={id} myCardId={String(duel.card1)} />;
   if (view === 'join') {
-    return <JoinConfirm duel={duel} myCardId={player.cardId} config={config} latestStatus={() => statusRef.current} />;
+    return <JoinConfirm duel={duel} myCardId={player.cardId} config={config} />;
   }
+  if (lostJoinRace(view, sawJoinView)) return <Message text={JOIN_RACE_LOST} back />;
   return <Spectator />;
 }

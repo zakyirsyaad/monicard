@@ -21,7 +21,8 @@ export type DuelEngine = {
   skillRequested: boolean;
   error: string | null;
   stats: TxStats | null;
-  tap: () => void;
+  /** True when the engine buffered the tap (inside the send window): only then show feedback. */
+  tap: () => boolean;
   /** True when this press requested the skill (the caller shakes the panel only then). */
   requestSkill: () => boolean;
 };
@@ -120,15 +121,15 @@ export function useDuelEngine(args: Args): DuelEngine {
   const { latencyMs, skill, setSkill, error, rerender } = useEngineEvents(engine);
   useEngineStart(engine, args);
 
-  // Re-render on every tap so the pending damage moves immediately.
-  const tap = useCallback(() => {
-    engine?.tap();
-    rerender();
+  // Re-render on every accepted tap so the pending damage moves immediately.
+  const tap = useCallback((): boolean => {
+    const accepted = engine?.tap() ?? false;
+    if (accepted) rerender();
+    return accepted;
   }, [engine, rerender]);
 
   const requestSkill = useCallback((): boolean => {
-    if (!engine || skill !== 'idle') return false;
-    engine.requestSkill();
+    if (!engine || skill !== 'idle' || !engine.requestSkill()) return false;
     setSkill('requested');
     return true;
   }, [engine, skill, setSkill]);

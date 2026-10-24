@@ -108,9 +108,9 @@ export function Battle({ duel, block, side, countdown, duelEngine, opponentName,
   const seconds = secondsLeft(duel.endBlock, Math.max(block, duel.startBlock));
   const startsIn = countdownSeconds(duel.startBlock, block);
 
+  // Feedback only for input the engine accepted (started, startBlock ≤ block < endBlock − 2).
   const onTap = () => {
-    duelEngine.tap();
-    addFloater(tapDamage(1, me.atk, me.mult));
+    if (duelEngine.tap()) addFloater(tapDamage(1, me.atk, me.mult));
   };
 
   // Shake only when this press actually requested the skill; never per tap.

@@ -386,6 +386,23 @@ describe('txEngine extra rules', () => {
     expect(engine.stats().txCount).toBe(0);
   });
 
+  it('tap and requestSkill report whether the input was accepted', () => {
+    const { engine } = setup();
+    expect(engine.tap()).toBe(false); // not started
+    expect(engine.requestSkill()).toBe(false);
+    engine.onBlock(99);
+    engine.start(DUEL);
+    expect(engine.tap()).toBe(false); // before startBlock
+    engine.onBlock(110);
+    expect(engine.tap()).toBe(true);
+    expect(engine.requestSkill()).toBe(true);
+    expect(engine.requestSkill()).toBe(false); // already requested
+    engine.onBlock(165); // endBlock - 2: nothing can be sent anymore
+    expect(engine.tap()).toBe(false);
+    engine.stop();
+    expect(engine.tap()).toBe(false);
+  });
+
   it('a throwing listener does not skip the next send check', async () => {
     const report = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { engine } = setup();

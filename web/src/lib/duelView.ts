@@ -47,6 +47,14 @@ export function phase(duel: DuelView | null, block: number, address: Hex): DuelP
   return block < duel.startBlock ? 'countdown' : 'battle';
 }
 
+/**
+ * A visitor who saw the join screen and is now a spectator lost the race to join
+ * (someone else joined first, or their own join reverted): say so instead of "already underway".
+ */
+export function lostJoinRace(view: DuelPhase, sawJoinView: boolean): boolean {
+  return view === 'spectator' && sawJoinView;
+}
+
 export function sideStats(duel: DuelView, side: Side): SideStats {
   return side === 1
     ? {

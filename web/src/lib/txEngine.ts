@@ -31,8 +31,10 @@ export type TxStats = { txCount: number; damageSent: number; avgLatencyMs: numbe
 
 export type TxEngine = {
   start(duel: EngineDuel): void;
-  tap(): void;
-  requestSkill(): void;
+  /** False when ignored (not started, outside startBlock ≤ block < endBlock − 2). */
+  tap(): boolean;
+  /** False when ignored (outside the send window, or already requested/used). */
+  requestSkill(): boolean;
   /** Block of the latest WebSocket message: the engine's current block and the WS HP basis. */
   onBlock(block: number): void;
   pendingDamageEstimate(atk: number, mult: number, hp: number, maxHp: number): number;
@@ -227,14 +229,16 @@ export function createTxEngine(deps: TxEngineDeps): TxEngine {
     start,
     stop: halt,
     tap() {
-      if (!duel || !inPlay(duel)) return;
+      if (!duel || !inPlay(duel)) return false;
       buffer += 1;
       trySend();
+      return true;
     },
     requestSkill() {
-      if (!duel || !inPlay(duel) || skill !== 'idle') return;
+      if (!duel || !inPlay(duel) || skill !== 'idle') return false;
       skill = 'requested';
       trySend();
+      return true;
     },
     onBlock(b) {
       block = Math.max(block, b);

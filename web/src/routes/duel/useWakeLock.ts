@@ -13,14 +13,19 @@ export function useWakeLock(active: boolean): void {
       });
     };
 
+    let pending = false;
+    // One request at a time: a second concurrent request would leave an unreleased sentinel behind.
     const request = async () => {
-      if (sentinel && !sentinel.released) return;
+      if (pending || (sentinel && !sentinel.released)) return;
+      pending = true;
       try {
         const next = await navigator.wakeLock.request('screen');
         if (disposed) release(next);
         else sentinel = next;
       } catch {
         // Refused (battery saver, hidden tab, no permission): the duel still works, the screen may dim.
+      } finally {
+        pending = false;
       }
     };
 
