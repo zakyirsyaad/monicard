@@ -9,6 +9,9 @@
     "createDuel": 122000,
     "joinDuel": 137000,
     "attack": 62000,
-    "settle": 107000
-  }
+    "settle": 107000,
+    "stake": 131000,
+    "claim": 154000
+  },
+  "stakeVault": "0x642C1364b62344128087549ceeD9268D5E3385df"
 }
