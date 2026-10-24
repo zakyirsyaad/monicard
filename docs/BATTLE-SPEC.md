@@ -9,11 +9,11 @@ Keputusan user 12:48, direvisi 12:57 (v2; v3 12:59 menggantikan v1/v2): duel uta
 - **Papan (board):** **3 slot** per pemain. Kartu yang ditaruh masuk permainan dengan HP penuh (HP persisten sampai KO).
 - **Awal match:** setelah `joinMatch`, kedua pemain menarik **1 kartu acak** ke tangan. Siapa jalan pertama diundi acak.
 - **Satu giliran = 1 tx `act(id, handIdx, special)`:**
-  1. **Tarik:** otomatis menarik 1 kartu acak baru ke tangan, jika tumpukan belum habis (maks 10 tarikan).
+  1. **Tangan sudah berisi:** tidak ada tarikan di awal `act`. Kartu yang didapat pada akhir giliran lawan sudah ada di tangan, jadi pemain melihatnya sebelum memutuskan.
   2. **Taruh (opsional):** `handIdx` = nomor tarikan (0-9) dari kartu di tangan yang ditaruh ke slot papan kosong terkecil; `255` = tidak menaruh. Kartu harus ada di tangan dan ada slot kosong.
   3. **Serang:** semua kartu di papan pemain menyerang **1 kartu depan lawan** (slot papan lawan terisi dengan indeks terkecil). Damage tiap kartu = `atk x DAMAGE_SCALE x elementMult(elemenKartu, elemenTarget) / 100`, dijumlahkan. `special = true` menggandakan damage total, **sekali per match per pemain**. Tanpa kartu di papan penyerang atau lawan, tidak ada serangan.
   4. Target HP 0 -> **KO**: kartu dibuang, **skor penyerang +1**. **Skor 2 menang.**
-  5. Giliran berpindah.
+  5. **Akhir giliran:** giliran berpindah. Jika match masih Active, **pemain berikutnya langsung menarik 1 kartu acak baru** (jika `drawn < 10`), sehingga kartu itu sudah di tangan saat gilirannya dimulai. Kalau match selesai, tidak ada tarikan. `Acted.drawnNo` = nomor tarikan yang diterima pemain berikutnya (255 kalau tidak ada).
 - **Kalah otomatis:** pemain tanpa kartu di papan, di tangan, dan tumpukan kosong.
 - **Timeout:** `TURN_TIMEOUT_BLOCKS = 100` (+-30 dtk) -> lawan memanggil `claimTimeout` dan menang.
 - `elementMult(a, d)`: `(d+1)%3 == a` -> 150; sama -> 100; kalah -> 75. Elemen: 0 Fire, 1 Water, 2 Lightning.

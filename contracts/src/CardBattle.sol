@@ -2,10 +2,12 @@
 pragma solidity 0.8.24;
 
 /// @title CardBattle
-/// @notice Turn-based card duel. Every player draws a fresh random card on each
-///         turn, up to ten per match. Cards are generated onchain from
-///         `block.prevrandao` and are not tied to any NFT: no ownership check,
-///         no deck selection, no calls to other contracts.
+/// @notice Turn-based card duel. Each turn ends by handing the opponent one
+///         freshly drawn card, so a player starts their turn with the new card
+///         already in hand and can place it before attacking. Cards are
+///         generated onchain from `block.prevrandao` and are not tied to any
+///         NFT: no ownership check, no deck selection, no calls to other
+///         contracts.
 contract CardBattle {
     enum Status {
         Open,
@@ -136,8 +138,10 @@ contract CardBattle {
         emit MatchJoined(id, msg.sender);
     }
 
-    /// @notice Take one turn: draw a card, optionally place one card from the
-    ///         hand, then attack with every card on the board.
+    /// @notice Take one turn: optionally place one card from the hand, then
+    ///         attack with every card on the board. When the match continues,
+    ///         the opponent draws their next card before the turn passes, so it
+    ///         is already in hand once their turn starts.
     /// @param handIdx Draw number (0-9) of the card to place, or 255 to skip.
     /// @param special Spend this player's once-per-match double damage.
     function act(uint256 id, uint8 handIdx, bool special) external {
@@ -152,12 +156,6 @@ contract CardBattle {
 
         if (handIdx != NO_CARD && handIdx >= MAX_DRAWS) revert InvalidHandIndex(handIdx);
         if (special && me.specialUsed) revert SpecialAlreadyUsed();
-
-        uint8 drawnNo = NO_CARD;
-        if (me.drawn < MAX_DRAWS) {
-            drawnNo = me.drawn;
-            _drawCard(id, side, me, drawnNo);
-        }
 
         if (handIdx != NO_CARD) {
             if (handIdx >= me.drawn || (me.placed & (uint16(1) << handIdx)) != 0) {
@@ -199,17 +197,28 @@ contract CardBattle {
         }
 
         m.lastMoveBlock = uint32(block.number);
-        emit Acted(id, msg.sender, drawnNo, handIdx, specialApplied, damage, ko);
 
+        bool over;
         if (ko) {
             uint8 score = side == SIDE_P1 ? m.score1 : m.score2;
-            if (score >= WIN_SCORE || _isExhausted(foe)) {
-                _finish(id, m, side);
-                return;
-            }
+            over = score >= WIN_SCORE || _isExhausted(foe);
         }
 
-        m.turn = side == SIDE_P1 ? SIDE_P2 : SIDE_P1;
+        uint8 nextDrawn = NO_CARD;
+        if (!over) {
+            uint8 nextSide = side == SIDE_P1 ? SIDE_P2 : SIDE_P1;
+            if (foe.drawn < MAX_DRAWS) {
+                nextDrawn = foe.drawn;
+                _drawCard(id, nextSide, foe, nextDrawn);
+            }
+            m.turn = nextSide;
+        }
+
+        emit Acted(id, msg.sender, nextDrawn, handIdx, specialApplied, damage, ko);
+
+        if (over) {
+            _finish(id, m, side);
+        }
     }
 
     /// @notice Claim a win when the side to move ran out the turn clock.

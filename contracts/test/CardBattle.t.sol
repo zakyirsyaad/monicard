@@ -117,7 +117,8 @@ contract CardBattleTest is Test {
         return battle.getMatch(id);
     }
 
-    /// @dev Make no-op moves until `side` is to move. No-op turns only draw.
+    /// @dev Make no-op moves until `side` is to move. A no-op turn still hands
+    ///      the opponent their next draw.
     function _waitFor(uint256 id, uint8 side) private returns (CardBattle.MatchView memory v) {
         for (uint256 i; i < 12; ++i) {
             v = battle.getMatch(id);
@@ -330,38 +331,71 @@ contract CardBattleTest is Test {
         assertGt(distinct, 1, "a ten-card pile must not be a single repeated card");
     }
 
-    function test_actDrawsOneCardIntoTheHand() public {
+    function test_actHandsTheNextPlayerACard() public {
         uint256 id = _open();
         CardBattle.MatchView memory v = battle.getMatch(id);
         uint8 side = v.turn;
-        uint8 oldDrawn = side == 1 ? v.drawn1 : v.drawn2;
+        uint8 nextSide = side == 1 ? 2 : 1;
+        uint8 moverDrawnBefore = side == 1 ? v.drawn1 : v.drawn2;
+        uint8 nextDrawnBefore = nextSide == 1 ? v.drawn1 : v.drawn2;
         address player = side == 1 ? v.p1 : v.p2;
 
-        (uint8 el, uint8 rar, uint16 atk, uint16 hp) = battle.drawStats(id, side, oldDrawn);
+        (uint8 el, uint8 rar, uint16 atk, uint16 hp) = battle.drawStats(id, nextSide, nextDrawnBefore);
 
         vm.expectEmit(true, true, false, true, address(battle));
-        emit Acted(id, player, oldDrawn, 255, false, 0, false);
+        emit Acted(id, player, nextDrawnBefore, 255, false, 0, false);
         vm.prank(player);
         battle.act(id, 255, false);
 
         CardBattle.MatchView memory afterAct = battle.getMatch(id);
-        if (side == 1) {
-            assertEq(afterAct.drawn1, oldDrawn + 1);
-            assertEq(afterAct.el1[oldDrawn], el);
-            assertEq(afterAct.rar1[oldDrawn], rar);
-            assertEq(afterAct.atk1[oldDrawn], atk);
-            assertEq(afterAct.maxHp1[oldDrawn], hp);
-            assertEq(afterAct.hp1[oldDrawn], hp);
+        if (nextSide == 1) {
+            assertEq(afterAct.drawn1, nextDrawnBefore + 1);
+            assertEq(afterAct.el1[nextDrawnBefore], el);
+            assertEq(afterAct.rar1[nextDrawnBefore], rar);
+            assertEq(afterAct.atk1[nextDrawnBefore], atk);
+            assertEq(afterAct.maxHp1[nextDrawnBefore], hp);
+            assertEq(afterAct.hp1[nextDrawnBefore], hp);
         } else {
-            assertEq(afterAct.drawn2, oldDrawn + 1);
-            assertEq(afterAct.el2[oldDrawn], el);
-            assertEq(afterAct.rar2[oldDrawn], rar);
-            assertEq(afterAct.atk2[oldDrawn], atk);
-            assertEq(afterAct.maxHp2[oldDrawn], hp);
-            assertEq(afterAct.hp2[oldDrawn], hp);
+            assertEq(afterAct.drawn2, nextDrawnBefore + 1);
+            assertEq(afterAct.el2[nextDrawnBefore], el);
+            assertEq(afterAct.rar2[nextDrawnBefore], rar);
+            assertEq(afterAct.atk2[nextDrawnBefore], atk);
+            assertEq(afterAct.maxHp2[nextDrawnBefore], hp);
+            assertEq(afterAct.hp2[nextDrawnBefore], hp);
         }
-        assertEq(afterAct.turn, side == 1 ? 2 : 1);
+        if (side == 1) {
+            assertEq(afterAct.drawn1, moverDrawnBefore, "acting must not draw for the mover");
+        } else {
+            assertEq(afterAct.drawn2, moverDrawnBefore, "acting must not draw for the mover");
+        }
+        assertEq(afterAct.turn, nextSide);
         assertEq(afterAct.lastMoveBlock, uint32(block.number));
+    }
+
+    function test_cardDrawnLastTurnIsInHandAndPlaceableBeforeAttacking() public {
+        battle.setFixed(0, 0, 0, 10, 10000);
+        uint256 id = _open();
+        CardBattle.MatchView memory v = battle.getMatch(id);
+        uint8 first = v.turn;
+        uint8 second = first == 1 ? 2 : 1;
+
+        // The first mover skips; the second player's next card lands in hand.
+        vm.prank(first == 1 ? v.p1 : v.p2);
+        battle.act(id, 255, false);
+
+        v = battle.getMatch(id);
+        uint8 drawnBefore = second == 1 ? v.drawn1 : v.drawn2;
+        assertEq(drawnBefore, 2, "the opponent must end the turn with two cards in hand");
+        assertEq(v.turn, second);
+
+        // At the start of their turn the freshly drawn card is already in hand,
+        // so it can be placed without any draw happening inside this act.
+        vm.prank(second == 1 ? v.p1 : v.p2);
+        battle.act(id, 1, false);
+
+        v = battle.getMatch(id);
+        assertEq(second == 1 ? v.board1[0] : v.board2[0], 1);
+        assertEq(second == 1 ? v.drawn1 : v.drawn2, drawnBefore, "the mover must not draw at act start");
     }
 
     function test_drawStopsAfterTenCards() public {
@@ -377,9 +411,8 @@ contract CardBattleTest is Test {
         assertEq(v.drawn2, 10);
 
         address player = _mover(v);
-        uint8 drawnNo = v.drawn1 == 10 ? 255 : v.drawn1;
         vm.expectEmit(true, true, false, true, address(battle));
-        emit Acted(id, player, drawnNo, 255, false, 0, false);
+        emit Acted(id, player, 255, 255, false, 0, false);
         vm.prank(player);
         battle.act(id, 255, false);
 
@@ -475,7 +508,7 @@ contract CardBattleTest is Test {
 
         uint256 expected = 3 * (uint256(10) * battle.DAMAGE_SCALE() * battle.elementMult(0, 0)) / 100;
         uint16 hpBefore = v.hp2[0];
-        uint8 drawnNo = v.drawn1;
+        uint8 drawnNo = v.drawn2;
 
         vm.expectEmit(true, true, false, true, address(battle));
         emit Acted(id, alice, drawnNo, 255, false, expected, false);
@@ -518,7 +551,7 @@ contract CardBattleTest is Test {
         CardBattle.MatchView memory v = _waitFor(id, 1);
 
         vm.expectEmit(true, true, false, true, address(battle));
-        emit Acted(id, alice, v.drawn1, 255, false, 0, false);
+        emit Acted(id, alice, v.drawn2, 255, false, 0, false);
         vm.prank(alice);
         battle.act(id, 255, false);
 
@@ -586,7 +619,7 @@ contract CardBattleTest is Test {
         CardBattle.MatchView memory v = _waitFor(id, 1);
 
         vm.expectEmit(true, true, false, true, address(battle));
-        emit Acted(id, alice, v.drawn1, 255, false, 0, false);
+        emit Acted(id, alice, v.drawn2, 255, false, 0, false);
         vm.prank(alice);
         battle.act(id, 255, true);
 
@@ -608,7 +641,7 @@ contract CardBattleTest is Test {
 
         CardBattle.MatchView memory v = _waitFor(id, 1);
         uint16 p1HpBefore = v.hp1[0];
-        uint8 drawnNo = v.drawn1;
+        uint8 drawnNo = v.drawn2;
 
         vm.expectEmit(true, true, false, true, address(battle));
         emit Acted(id, alice, drawnNo, 255, false, 525, true);
@@ -638,14 +671,16 @@ contract CardBattleTest is Test {
         _place(id, 2, 1); // p2 fills slot 0 again and hits p1
 
         CardBattle.MatchView memory v = _waitFor(id, 1);
+        uint8 p2DrawnBefore = v.drawn2;
         vm.expectEmit(true, true, false, true, address(battle));
-        emit Acted(id, alice, v.drawn1, 255, false, 525, true);
+        emit Acted(id, alice, 255, 255, false, 525, true);
         vm.expectEmit(true, true, false, true, address(battle));
         emit MatchEnded(id, alice);
         vm.prank(alice);
         battle.act(id, 255, false); // second KO
 
         v = battle.getMatch(id);
+        assertEq(v.drawn2, p2DrawnBefore, "a finished match must not draw for the loser");
         assertEq(v.score1, 2);
         assertEq(v.score2, 0);
         assertEq(uint8(v.status), uint8(CardBattle.Status.P1Won));
@@ -681,7 +716,7 @@ contract CardBattleTest is Test {
 
         CardBattle.MatchView memory v = _waitFor(id, 1);
         vm.expectEmit(true, true, false, true, address(battle));
-        emit Acted(id, alice, v.drawn1, 255, false, 350, true);
+        emit Acted(id, alice, 255, 255, false, 350, true);
         vm.expectEmit(true, true, false, true, address(battle));
         emit MatchEnded(id, alice);
         vm.prank(alice);
@@ -860,9 +895,9 @@ contract CardBattleTest is Test {
         uint8 drawn = side == 1 ? v.drawn1 : v.drawn2;
         address player = side == 1 ? v.p1 : v.p2;
 
-        // Act draws first, so only indices at or past the post-draw hand are invalid.
-        uint8 afterDraw = drawn < 10 ? drawn + 1 : drawn;
-        vm.assume(handIdx >= afterDraw);
+        // Act no longer draws first, so only indices at or past the current hand
+        // are invalid at the start of the match.
+        vm.assume(handIdx >= drawn);
 
         vm.prank(player);
         if (handIdx >= 10) {
@@ -877,6 +912,9 @@ contract CardBattleTest is Test {
         uint8 turns = uint8(uint256(drawsToPlay) % 4); // three board slots
         battle.setFixed(0, 0, 0, 10, 10000);
         uint256 id = _open();
+        // When p2 moves first, `_waitFor` spends one p2 no-op turn that already
+        // hands p1 the opening draw.
+        uint8 firstMover = battle.getMatch(id).turn;
 
         for (uint8 i; i < turns; ++i) {
             _place(id, 1, i);
@@ -886,6 +924,8 @@ contract CardBattleTest is Test {
         CardBattle.MatchView memory v = battle.getMatch(id);
         assertEq(v.placed1, (uint16(1) << turns) - 1);
         assertEq(v.board1[0], turns == 0 ? 255 : 0);
-        assertEq(v.drawn1, uint256(turns) + 1);
+        uint256 expectedDrawn = uint256(turns) + 1;
+        if (turns > 0 && firstMover == 2) expectedDrawn += 1;
+        assertEq(v.drawn1, expectedDrawn);
     }
 }
