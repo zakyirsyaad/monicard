@@ -174,7 +174,9 @@ export function BattleLobby() {
     <main className="min-h-[100dvh] bg-surface text-ink">
       <div className="mx-auto flex min-h-[100dvh] max-w-[420px] flex-col gap-6 px-4 py-6">
         <header className="flex flex-col gap-1">
-          <p className="label text-ink-muted">Monicard</p>
+          <Link to="/" className="label text-ink-muted underline underline-offset-4">
+            Monicard
+          </Link>
           <h1 className="display">Card Battle</h1>
           <p className="body text-ink-muted">Best of 3 · two KOs win. Cards are drawn onchain for this match only.</p>
         </header>

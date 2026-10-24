@@ -108,7 +108,12 @@ export function Play() {
 
   return (
     <Screen>
-      {config && <p className="label text-ink-muted">{config.event.name}</p>}
+      <div className="flex items-center justify-between">
+        {config ? <p className="label text-ink-muted">{config.event.name}</p> : <span />}
+        <Link to="/" className="body text-purple-ink underline underline-offset-4">
+          Home
+        </Link>
+      </div>
       {card ? (
         <section className="flex flex-col items-center gap-2 text-center">
           <div className="w-[200px]">
@@ -136,7 +141,7 @@ export function Play() {
         >
           <span className="flex flex-col">
             <span className="title leading-tight">Card Battle · Best of 3</span>
-            <span className="data leading-tight opacity-80">10 onchain draws · no deck needed</span>
+            <span className="data leading-tight opacity-80">Turn-based. Draw, place, strike.</span>
           </span>
           <span className="data" aria-hidden="true">
             →
@@ -146,6 +151,7 @@ export function Play() {
           <span className="label text-ink-muted">Tap Blitz</span>
           <span className="h-px flex-1 bg-line" aria-hidden="true" />
         </div>
+        <p className="body text-ink-muted">Real-time. Tap fast for 20 seconds.</p>
         <Button
           variant="secondary"
           busy={busy === 'agent'}
