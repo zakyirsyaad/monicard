@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { Notice } from '../components/Notice';
@@ -6,11 +7,14 @@ import { api } from '../lib/api';
 import { RevertedError } from '../lib/actions';
 import { toFriendly } from '../lib/errors';
 import { pullCard } from '../lib/flows';
-import { formatMon } from '../lib/format';
+import { formatInt, formatMon } from '../lib/format';
 import { RARITIES, RARITY_ODDS } from '../lib/game';
-import { rarityTextClass } from '../lib/labels';
 import { actionDeps, burnerAccount } from '../lib/player';
 import { takeReturnTo } from '../lib/returnTo';
+import { useArenaSocket } from '../lib/useArenaSocket';
+import { BattleDemo } from './home/BattleDemo';
+import { LiveStrip } from './home/LiveStrip';
+import './home/home.css';
 import type { Account, Config } from '../lib/types';
 import { useConfig } from '../lib/useConfig';
 
@@ -26,35 +30,37 @@ function InAppBrowserBanner() {
   );
 }
 
-/** Three Nadmon, one per element, stepped so the middle one leads. Line borders only (design system: no shadow or glow). */
-const HERO = [
-  { id: 'wavenad', name: 'Wavenad', border: 'border-element-water', weight: 'flex-1' },
-  { id: 'infernad', name: 'Infernad', border: 'border-element-fire', weight: 'flex-[1.45]' },
-  { id: 'voltnad', name: 'Voltnad', border: 'border-element-lightning', weight: 'flex-1' },
-] as const;
-
 const GITHUB = 'https://github.com/zakyirsyaad/monicard';
 const SCAN = 'https://testnet.monadscan.com/address';
 
-function Hero() {
-  return (
-    <div className="flex items-end justify-center gap-2" role="group" aria-label="Fire, Water and Lightning Nadmon">
-      {HERO.map((n) => (
-        <img
-          key={n.id}
-          src={`/nadmon/${n.id}.svg`}
-          alt={n.name}
-          width={240}
-          height={150}
-          className={`${n.weight} ${n.border} block h-auto min-w-0 rounded-card border-2 bg-surface-sunken`}
-        />
-      ))}
-    </div>
-  );
-}
-
-const SECTION = 'flex flex-col gap-4 border-t border-line pt-6';
+const SECTION = 'flex flex-col gap-4 border-t border-line pt-6 md:pt-8';
 const PANEL = 'flex flex-col gap-3 rounded-card border border-line bg-surface-raised p-4';
+const WRAP = 'mx-auto w-full max-w-[1040px] px-4';
+
+/** Adds `in` once the element scrolls into view, so `.reveal` children can stagger in. */
+function useInView<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setSeen(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          setSeen(true);
+          io.disconnect();
+        }
+      },
+      { threshold: 0.2 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return { ref, seen };
+}
 
 function Wheel() {
   return (
@@ -65,51 +71,72 @@ function Wheel() {
   );
 }
 
+const FAN = ['sparkit', 'dripnad', 'embrit'] as const;
+
 function HowToPlay() {
+  const { ref, seen } = useInView<HTMLOListElement>();
+  const rv = `reveal${seen ? ' in' : ''}`;
   return (
     <section className={SECTION} aria-labelledby="how">
       <h2 id="how" className="title">
         How to play
       </h2>
-      <ol className="grid gap-3 md:grid-cols-3">
-        <li className={PANEL}>
+      <ol ref={ref} className="grid gap-3 md:grid-cols-3">
+        <li className={`${PANEL} ${rv}`} style={{ '--i': 0 } as React.CSSProperties}>
           <span className="data text-ink-muted">1</span>
-          <h3 className="title">Draw</h3>
+          <h3 className="display">Draw</h3>
           <p className="body text-ink-muted">
             Each turn the contract draws one random card onchain and adds it to your hand. No deck to build.
           </p>
-          <div className="flex gap-2" aria-hidden="true">
-            {['sparkit', 'dripnad', 'embrit'].map((id) => (
-              <img key={id} src={`/nadmon/${id}.svg`} alt="" className="h-auto w-1/3 rounded-chip border border-line" />
+          <div className="mt-auto flex gap-2 pt-2" aria-hidden="true">
+            {FAN.map((id, i) => (
+              <img
+                key={id}
+                src={`/nadmon/${id}.svg`}
+                alt=""
+                className={`reveal${seen ? ' in' : ''} h-auto w-1/3 rounded-chip border border-line`}
+                style={{ '--i': i + 2 } as React.CSSProperties}
+              />
             ))}
           </div>
         </li>
-        <li className={PANEL}>
+        <li className={`${PANEL} ${rv}`} style={{ '--i': 1 } as React.CSSProperties}>
           <span className="data text-ink-muted">2</span>
-          <h3 className="title">Place or hold</h3>
+          <h3 className="display">Place or hold</h3>
           <p className="body text-ink-muted">
-            The board has 3 slots. Every card on the board strikes the front card of your opponent at the same time.
-            The element wheel adds a ×1.5 bonus.
+            The board has 3 slots. Every card on it strikes the front card of your opponent at the same time. The
+            element wheel adds a ×1.5 bonus.
           </p>
-          <div className="mt-auto flex flex-col gap-2">
+          <div className="mt-auto flex flex-col gap-2 pt-2">
             <div className="flex gap-2" aria-hidden="true">
-              <span className="h-10 flex-1 rounded-chip border-2 border-purple bg-purple-tint" />
-              <span className="h-10 flex-1 rounded-chip border border-line bg-surface-sunken" />
-              <span className="h-10 flex-1 rounded-chip border border-line bg-surface-sunken" />
+              <img
+                src="/nadmon/infernad.svg"
+                alt=""
+                className={`reveal${seen ? ' in' : ''} h-auto w-1/3 rounded-chip border-2 border-purple`}
+                style={{ '--i': 3 } as React.CSSProperties}
+              />
+              <span className="aspect-[240/150] w-1/3 rounded-chip border border-line bg-surface-sunken" />
+              <span className="aspect-[240/150] w-1/3 rounded-chip border border-line bg-surface-sunken" />
             </div>
             <Wheel />
           </div>
         </li>
-        <li className={PANEL}>
+        <li className={`${PANEL} ${rv}`} style={{ '--i': 2 } as React.CSSProperties}>
           <span className="data text-ink-muted">3</span>
-          <h3 className="title">Win</h3>
+          <h3 className="display">Win</h3>
           <p className="body text-ink-muted">
             Use your Special once per match for ×2 damage. Knock out two cards and the match is yours.
           </p>
-          <div className="mt-auto flex gap-2" aria-hidden="true">
-            <span className="data rounded-chip bg-berry-tint px-2 py-1 text-berry">KO 1</span>
-            <span className="data rounded-chip bg-berry-tint px-2 py-1 text-berry">KO 2</span>
-            <span className="data rounded-chip bg-purple-tint px-2 py-1 text-purple-ink">×2</span>
+          <div className="mt-auto flex items-center gap-2 pt-2" aria-hidden="true">
+            <span className={`reveal${seen ? ' in' : ''} data-lg rounded-chip bg-berry-tint px-3 py-1 text-berry`} style={{ '--i': 3 } as React.CSSProperties}>
+              KO 1
+            </span>
+            <span className={`reveal${seen ? ' in' : ''} data-lg rounded-chip bg-berry-tint px-3 py-1 text-berry`} style={{ '--i': 4 } as React.CSSProperties}>
+              KO 2
+            </span>
+            <span className={`reveal${seen ? ' in' : ''} data-lg rounded-chip bg-purple-tint px-3 py-1 text-purple-ink`} style={{ '--i': 5 } as React.CSSProperties}>
+              ×2
+            </span>
           </div>
         </li>
       </ol>
@@ -140,29 +167,35 @@ function Modes() {
   );
 }
 
-const WHY = [
-  { n: '1 tx', body: 'Every move is an onchain transaction, not a database write.' },
-  { n: '~300 ms', body: 'Blocks land fast enough for turns to feel instant.' },
-  { n: '∥', body: 'Matches run in parallel, so a whole room can play at once.' },
-] as const;
-
 function WhyMonad() {
+  const { duels } = useArenaSocket('all');
+  const parallel = duels.size > 1 ? formatInt(duels.size) : 'Many';
+  const items = [
+    { n: '1 tx', body: 'per move. Every action is an onchain transaction, not a database write.' },
+    { n: '~300 ms', body: 'blocks. Turns land fast enough to feel instant.' },
+    { n: parallel, body: 'matches in parallel. A whole room plays at once.' },
+  ];
   return (
-    <section className={SECTION} aria-labelledby="why">
-      <h2 id="why" className="title">
-        Why Monad
-      </h2>
-      <ul className="grid gap-3 md:grid-cols-3">
-        {WHY.map((w) => (
-          <li key={w.n} className={PANEL}>
-            <span className="data-lg">{w.n}</span>
-            <p className="body text-ink-muted">{w.body}</p>
-          </li>
-        ))}
-      </ul>
-      <Link to="/arena" className="title text-purple-ink underline underline-offset-4">
-        Watch the live arena
-      </Link>
+    <section className="bg-deep text-on-deep" aria-labelledby="why">
+      <div className={`${WRAP} flex flex-col gap-6 py-8 md:py-12`}>
+        <h2 id="why" className="title">
+          Why Monad
+        </h2>
+        <ul className="grid gap-6 md:grid-cols-3">
+          {items.map((w) => (
+            <li key={w.body} className="flex flex-col gap-2">
+              <span className="font-mono text-[40px] font-semibold leading-none tabular-nums md:text-[56px]">{w.n}</span>
+              <p className="body">{w.body}</p>
+            </li>
+          ))}
+        </ul>
+        <Link
+          to="/arena"
+          className="title flex h-12 w-full items-center justify-center rounded-card bg-on-deep px-6 text-deep md:w-auto md:self-start"
+        >
+          Watch the live arena
+        </Link>
+      </div>
     </section>
   );
 }
@@ -173,27 +206,60 @@ const REVENUE = [
   '5% creator royalty on every resale (ERC-2981)',
 ] as const;
 
+function ProjectorMock() {
+  return (
+    <div data-theme="dark" className="flex flex-col gap-3 rounded-card border-2 border-line bg-surface p-4 text-ink" aria-hidden="true">
+      <p className="label text-ink-muted">Your event · Presented by Your Brand</p>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <span className="data w-10 text-ink-muted">P1</span>
+          <span className="h-2 flex-1 rounded-chip bg-surface-sunken">
+            <span className="block h-2 w-3/4 rounded-chip bg-purple" />
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="data w-10 text-ink-muted">AI</span>
+          <span className="h-2 flex-1 rounded-chip bg-surface-sunken">
+            <span className="block h-2 w-1/3 rounded-chip bg-berry" />
+          </span>
+        </div>
+      </div>
+      <div className="grid grid-cols-6 gap-1">
+        {Array.from({ length: 12 }, (_, i) => (
+          <span key={i} className={`h-4 rounded-chip border ${i % 3 === 0 ? 'border-purple' : 'border-line'} bg-surface-sunken`} />
+        ))}
+      </div>
+      <p className="label text-ink-muted">Scan to play</p>
+    </div>
+  );
+}
+
 function Organizers() {
   return (
     <section className={SECTION} aria-labelledby="orgs">
       <h2 id="orgs" className="title">
         For event organizers
       </h2>
-      <div className="grid gap-3 md:grid-cols-2">
-        <div className={PANEL}>
-          <h3 className="title">Your arena on the big screen</h3>
-          <p className="body text-ink-muted">
-            A branded live view for the projector with your event name and sponsor. Gas is sponsor-funded, so attendees
-            scan, play and pay nothing.
-          </p>
-        </div>
-        <div className={PANEL}>
-          <h3 className="title">How it earns</h3>
-          <ul className="body flex flex-col gap-1 text-ink-muted">
-            {REVENUE.map((r) => (
-              <li key={r}>{r}</li>
-            ))}
-          </ul>
+      <div className="grid gap-6 md:grid-cols-2 md:items-center">
+        <ProjectorMock />
+        <div className="flex flex-col gap-4">
+          <div>
+            <h3 className="display">Your arena on the big screen</h3>
+            <p className="body mt-2 text-ink-muted">
+              A branded live view for the projector with your event name and sponsor. Gas is sponsor-funded, so
+              attendees scan, play and pay nothing.
+            </p>
+          </div>
+          <div>
+            <h3 className="title">How it earns</h3>
+            <ul className="body mt-2 flex flex-col gap-1 text-ink-muted">
+              {REVENUE.map((r) => (
+                <li key={r} className="border-t border-line pt-1">
+                  {r}
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       </div>
     </section>
@@ -236,6 +302,21 @@ function Odds() {
       {RARITIES.map((name, i) => `${name} ${RARITY_ODDS[i]}%`).join(' · ')}
       <span className="body block">Cards are rolled onchain and trade with a 5% creator royalty.</span>
     </p>
+  );
+}
+
+function ScanToPlay() {
+  const { origin, host } = window.location;
+  return (
+    <div className="hidden items-center gap-4 md:flex">
+      <div data-theme="light" className="rounded-chip border border-line bg-surface-raised p-2 text-ink">
+        <QRCodeSVG value={`${origin}/`} size={96} fgColor="currentColor" bgColor="transparent" />
+      </div>
+      <div>
+        <p className="title">Scan to play on your phone</p>
+        <p className="data text-ink-muted">{host}</p>
+      </div>
+    </div>
   );
 }
 
@@ -296,9 +377,9 @@ export function Home() {
 
   return (
     <main className="min-h-[100dvh] bg-surface text-ink">
-      <div className="mx-auto flex max-w-[960px] flex-col gap-6 px-4 py-6 md:gap-8 md:py-8">
+      <div className={`${WRAP} flex flex-col gap-6 py-6 md:gap-8 md:py-10`}>
         <InAppBrowserBanner />
-        <div className="grid gap-6 md:grid-cols-2 md:items-center md:gap-8">
+        <div className="grid gap-6 md:grid-cols-[1.1fr_1fr] md:items-center md:gap-10">
           <header className="flex flex-col gap-3">
             {config && (
               <p className="label text-ink-muted">
@@ -306,10 +387,15 @@ export function Home() {
                 {sponsor ? ` · Presented by ${sponsor}` : ''}
               </p>
             )}
-            <h1 className="display">Monicard</h1>
-            <p className="title">Onchain card battles on Monad. Every move is a transaction.</p>
+            <h1 className="flex flex-col gap-1">
+              <span className="text-[56px] font-extrabold leading-none tracking-tight md:text-[96px]">Monicard</span>
+              <span className="text-[28px] font-bold leading-[32px] md:text-[44px] md:leading-[48px]">
+                Every move is a <span className="text-purple">transaction.</span>
+              </span>
+            </h1>
+            <p className="title">Onchain card battles on Monad.</p>
             <p className="body text-ink-muted">Scan, play in 3 seconds. No wallet, no seed phrase.</p>
-            <div className="mt-2 flex flex-col gap-3">
+            <div className="mt-2 flex flex-col gap-3 md:max-w-[360px]">
               {error && <Notice>{error}</Notice>}
               <Button onClick={() => navigate('/battle')}>Play Card Battle</Button>
               <Button
@@ -322,14 +408,26 @@ export function Home() {
                 {cta}
               </Button>
             </div>
+            <ScanToPlay />
           </header>
-          <Hero />
+          <BattleDemo />
         </div>
+        <LiveStrip />
         <HowToPlay />
         <Modes />
-        <WhyMonad />
+      </div>
+      <WhyMonad />
+      <div className={`${WRAP} flex flex-col gap-6 py-6 md:gap-8 md:py-10`}>
         <Organizers />
         <Odds />
+        <section className="flex flex-col items-start gap-4 rounded-card border border-line bg-purple-tint p-6 md:flex-row md:items-center md:justify-between" aria-labelledby="ready">
+          <h2 id="ready" className="display text-purple-ink md:text-[40px] md:leading-[44px]">
+            Ready? Play Card Battle
+          </h2>
+          <div className="w-full md:max-w-[280px]">
+            <Button onClick={() => navigate('/battle')}>Play Card Battle</Button>
+          </div>
+        </section>
         <Footer config={config} />
       </div>
     </main>
