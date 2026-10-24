@@ -38,6 +38,7 @@ const SOCIAL = [
   { name: 'Demo video', href: 'https://youtu.be/N-FRL6CPAis' },
   { name: 'Post on X', href: 'https://x.com/0xKayz_/status/2113913855734862058' },
   { name: 'LinkedIn', href: 'https://lnkd.in/p/gB2QTGnT' },
+  { name: 'Instagram', href: 'https://www.instagram.com/reel/De3yo2qx4-h/' },
 ] as const;
 const SCAN = `${EXPLORER}/address`;
 
