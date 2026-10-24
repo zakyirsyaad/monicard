@@ -44,6 +44,8 @@ const CACHE_REFRESH_EVERY = 10;
 /** A just-created match (or a fresh act) can need a few blocks before getMatch catches up. */
 const MATCH_LOOKUP_ATTEMPTS = 8;
 const MATCH_LOOKUP_MS = 300;
+/** A reverted claimTimeout is retried at most this often; the next fresh read decides. */
+const MAX_CLAIM_ATTEMPTS = 3;
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const defaultLog = (msg: string, err?: unknown): void => console.error(msg, err);
@@ -148,6 +150,7 @@ export function createBattleRunner(deps: BattleRunnerDeps): BattleRunner {
     let confirmedBlock = joinedAtBlock;
     let match = await readConfirmed(id, confirmedBlock);
     let idle = 0;
+    let claimAttempts = 0;
 
     while (now() < deadline) {
       if (match === null || match.lastMoveBlock < confirmedBlock) {
@@ -165,13 +168,24 @@ export function createBattleRunner(deps: BattleRunnerDeps): BattleRunner {
         confirmedBlock = Number(receipt.blockNumber);
         match = await readConfirmed(id, confirmedBlock);
         idle = 0;
+        claimAttempts = 0;
         continue;
       }
 
       if (timeoutDue(match, poller.latestBlock())) {
-        // The contract sets the winner on claimTimeout; a successful receipt is final.
+        if (claimAttempts >= MAX_CLAIM_ATTEMPTS) {
+          log(`battle: claimTimeout(${id}) still reverting after ${MAX_CLAIM_ATTEMPTS} attempts`);
+          return 'send_failed';
+        }
+        claimAttempts += 1;
         const receipt = await claimTimeout(id);
-        return receipt !== null && receipt.status === 'success' ? 'ok' : 'send_failed';
+        if (receipt === null) return 'send_failed';
+        // A successful claim is final. A revert means p1 moved inside the stale window:
+        // re-read and let the loop act or wait instead of abandoning a joined match.
+        if (receipt.status === 'success') return 'ok';
+        match = await readConfirmed(id, confirmedBlock);
+        idle = 0;
+        continue;
       }
 
       await sleep(WAIT_MS);
@@ -187,6 +201,15 @@ export function createBattleRunner(deps: BattleRunnerDeps): BattleRunner {
     return 'ok';
   }
 
+  /** Starts the background loop and hands the busy flag to it. */
+  function startPlay(id: bigint, fromBlock: number, policy: Policy): void {
+    void play(id, policy, fromBlock)
+      .catch((err: unknown) => log(`battle: match ${id} play failed`, err))
+      .finally(() => {
+        busyFlag = false;
+      });
+  }
+
   async function battle(matchId: bigint): Promise<BattleResult> {
     if (busyFlag) return 'busy';
     busyFlag = true;
@@ -195,20 +218,38 @@ export function createBattleRunner(deps: BattleRunnerDeps): BattleRunner {
     try {
       const match = await findMatch(matchId);
       if (match === null) return 'not_open';
-      if (match.status !== 'Open') return 'not_open';
       if (lower(match.p1) === lower(queue.address)) return 'not_open';
 
-      const joinReceipt = await join(matchId);
-      if (joinReceipt === null || joinReceipt.status !== 'success') return 'send_failed';
+      // Resume an Active match where this wallet is p2: a lost join receipt or a
+      // server restart must not leave the human facing a dead opponent.
+      if (match.status === 'Active') {
+        if (lower(match.p2) !== lower(queue.address)) return 'not_open';
+        const policy = deps.store?.get().policy ?? DEFAULT_POLICY;
+        handedOff = true;
+        startPlay(matchId, match.lastMoveBlock, policy);
+        return 'ok';
+      }
+      if (match.status !== 'Open') return 'not_open';
 
-      handedOff = true;
+      const joinReceipt = await join(matchId);
+      if (joinReceipt === null || joinReceipt.status !== 'success') {
+        // The node may have accepted the join even though the receipt wait failed.
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const after = await readMatch(matchId, true);
+          if (after !== null && after.status === 'Active' && lower(after.p2) === lower(queue.address)) {
+            const policy = deps.store?.get().policy ?? DEFAULT_POLICY;
+            handedOff = true;
+            startPlay(matchId, after.lastMoveBlock, policy);
+            return 'ok';
+          }
+          await sleep(MATCH_LOOKUP_MS);
+        }
+        return 'send_failed';
+      }
+
       const policy = deps.store?.get().policy ?? DEFAULT_POLICY;
-      // The HTTP answer must not wait for the whole match; play() owns the busy flag from here.
-      void play(matchId, policy, Number(joinReceipt.blockNumber))
-        .catch((err: unknown) => log(`battle: match ${matchId} play failed`, err))
-        .finally(() => {
-          busyFlag = false;
-        });
+      handedOff = true;
+      startPlay(matchId, Number(joinReceipt.blockNumber), policy);
       return 'ok';
     } catch (err) {
       log(`battle: match ${matchId} failed`, err);
