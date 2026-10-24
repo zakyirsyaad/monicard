@@ -1,10 +1,13 @@
 import type { Server } from 'node:http';
 import type { DuelView, Hex } from '@nad/shared';
 import { WebSocketServer } from 'ws';
+import type { BattleMatch } from './battle';
 
 // ---- Message types: mirror the frozen "Pesan WebSocket (/ws)" contract exactly. ----
 
 export type DuelsMsg = { type: 'duels'; block: string; duels: DuelView[]; featuredId: string | null };
+
+export type MatchesMsg = { type: 'matches'; block: string; featuredId: string | null; matches: BattleMatch[] };
 
 export type StatsMsg = {
   type: 'stats';
@@ -38,9 +41,9 @@ export type AgentMsg = {
 export type TauntMsg = { type: 'taunt'; duelId: string; text: string };
 
 /** `leaderboard` is part of the contract but was cut (addendum section 2): nothing in the server sends it. */
-export type WsMessage = DuelsMsg | StatsMsg | LeaderboardMsg | AgentMsg | TauntMsg;
+export type WsMessage = DuelsMsg | StatsMsg | LeaderboardMsg | AgentMsg | TauntMsg | MatchesMsg;
 
-export type WsScope = 'all' | { duelId: string };
+export type WsScope = 'all' | { duelId: string } | { matchId: string };
 
 /**
  * Called for every new connection. `send` applies the same scope filter as `broadcast`,
@@ -59,6 +62,8 @@ export type WsHubCore = {
   size(): number;
   /** Duel ids that scoped connections are subscribed to. */
   subscribedIds(): Set<string>;
+  /** Card Battle match ids that scoped connections are subscribed to. */
+  subscribedMatchIds(): Set<string>;
 };
 
 export const WS_PATH = '/ws';
@@ -68,9 +73,9 @@ export const MAX_BUFFERED_BYTES = 65_536;
 /** readyState value of an OPEN WebSocket. */
 const READY_STATE_OPEN = 1;
 const MAX_DUEL_ID_DIGITS = 20;
-const DUEL_SCOPE = /^duel:(\d+)$/;
+const SCOPED_ID = /^(duel|match):(\d+)$/;
 
-/** `?scope=all` | `?scope=duel:<digits>`; anything missing or invalid means `all`. */
+/** `?scope=all` | `?scope=duel:<digits>` | `?scope=match:<digits>`; anything invalid means `all`. */
 export function parseScope(url: string | undefined): WsScope {
   if (!url) return 'all';
   let raw: string | null;
@@ -79,23 +84,29 @@ export function parseScope(url: string | undefined): WsScope {
   } catch {
     return 'all';
   }
-  const match = raw === null ? null : DUEL_SCOPE.exec(raw);
-  const digits = match?.[1];
-  if (!digits || digits.length > MAX_DUEL_ID_DIGITS) return 'all';
-  return { duelId: BigInt(digits).toString() };
+  const match = raw === null ? null : SCOPED_ID.exec(raw);
+  const kind = match?.[1];
+  const digits = match?.[2];
+  if (!kind || !digits || digits.length > MAX_DUEL_ID_DIGITS) return 'all';
+  const id = BigInt(digits).toString();
+  return kind === 'match' ? { matchId: id } : { duelId: id };
 }
 
-const scopeKey = (scope: WsScope): string => (scope === 'all' ? 'all' : `duel:${scope.duelId}`);
+const scopeKey = (scope: WsScope): string =>
+  scope === 'all' ? 'all' : 'duelId' in scope ? `duel:${scope.duelId}` : `match:${scope.matchId}`;
 
 /** Message as seen by a connection with this scope, or null when it must not receive it. */
 function project(scope: WsScope, msg: WsMessage): WsMessage | null {
   if (scope === 'all') return msg;
+  const scoped = scope as { duelId?: string; matchId?: string };
   switch (msg.type) {
     case 'duels':
       // Always delivered (possibly empty) so the phone still learns the block number.
-      return { ...msg, duels: msg.duels.filter((d) => d.id === scope.duelId) };
+      return { ...msg, duels: scoped.duelId === undefined ? [] : msg.duels.filter((d) => d.id === scoped.duelId) };
+    case 'matches':
+      return { ...msg, matches: scoped.matchId === undefined ? [] : msg.matches.filter((m) => m.id === scoped.matchId) };
     case 'taunt':
-      return msg.duelId === scope.duelId ? msg : null;
+      return msg.duelId === scoped.duelId ? msg : null;
     case 'leaderboard':
       return null;
     default:
@@ -153,7 +164,9 @@ export function createWsHubCore(): WsHubCore {
     broadcast,
     onConnect: (cb) => void connectCallbacks.push(cb),
     size: () => sockets.size,
-    subscribedIds: () => new Set([...sockets.values()].flatMap((scope) => (scope === 'all' ? [] : [scope.duelId]))),
+    subscribedIds: () => new Set([...sockets.values()].flatMap((scope) => (scope !== 'all' && 'duelId' in scope ? [scope.duelId] : []))),
+    subscribedMatchIds: () =>
+      new Set([...sockets.values()].flatMap((scope) => (scope !== 'all' && 'matchId' in scope ? [scope.matchId] : []))),
   };
 }
 
@@ -161,6 +174,7 @@ export type WsHub = {
   broadcast(msg: WsMessage): void;
   onConnect(cb: ConnectCallback): void;
   subscribedIds(): Set<string>;
+  subscribedMatchIds?(): Set<string>;
   close(): void;
 };
 
@@ -202,6 +216,7 @@ export function createWsHub(server: Server): WsHub {
     broadcast: core.broadcast,
     onConnect: core.onConnect,
     subscribedIds: core.subscribedIds,
+    subscribedMatchIds: core.subscribedMatchIds,
     close() {
       clearInterval(pinger);
       wss.close();

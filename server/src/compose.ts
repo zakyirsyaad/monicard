@@ -7,6 +7,8 @@ import { Hono } from 'hono';
 import { parseEther } from 'viem';
 import type { AccountReader } from './account';
 import { buildApp, isApiPath, readBots, spaFallback, type EventInfo } from './app';
+import { battleRoutes, createBattleLimiter } from './agent/battleRoutes';
+import { createBattleRunner } from './agent/battleRunner';
 import { startBlockWatcher, type BlockWatcher } from './blockWatcher';
 import { attachCardMinting, createCardService, createChainCardReader } from './cards/service';
 import { cardRoutes } from './cards/routes';
@@ -39,6 +41,8 @@ export type ComposeConfig = {
   arena: Hex;
   /** StakeVault address; absent on deployments without one (anvil). */
   stakeVault?: Hex;
+  /** CardBattle address; absent until the battle deployment exists. */
+  battle?: Hex;
   gasLimits: GasLimits;
   batchMs: number;
   event: EventInfo;
@@ -57,6 +61,8 @@ export type ComposeDeps = {
   masterQueue: WalletQueue;
   /** Sends settle txs from the poller. */
   operatorQueue: WalletQueue;
+  /** Signs Card Battle joins/actions for the AI Agent; omitted when battle is not deployed. */
+  agentQueue?: WalletQueue;
   accounts: AccountReader;
   /** Built web client directory; may not exist (API-only mode). */
   webDist: string;
@@ -177,6 +183,7 @@ export function composeApp(deps: ComposeDeps): Composed {
     cards: config.cards,
     arena: config.arena,
     stakeVault: config.stakeVault,
+    battle: config.battle,
     gasLimits,
     batchMs: config.batchMs,
     pullPrice: deps.pullPrice,
@@ -198,6 +205,7 @@ export function composeApp(deps: ComposeDeps): Composed {
         cards: config.cards,
         arena: config.arena,
         stakeVault: config.stakeVault,
+        battle: config.battle,
         gasLimits,
         pullPrice: deps.pullPrice,
       },
@@ -225,6 +233,25 @@ export function composeApp(deps: ComposeDeps): Composed {
   attachCardMinting(hub, cardService, config.cards);
   app.route('/', cardRoutes(cardService));
 
+  // The poller only exists after start(); the battle runner reads it through this lazy slice.
+  let pollerRef: Poller | null = null;
+  const agentQueue = deps.agentQueue;
+  if (config.battle !== undefined && agentQueue !== undefined) {
+    const limit = (fn: string): number => gasLimits[fn] ?? 300_000;
+    const runner = createBattleRunner({
+      queue: agentQueue,
+      hub,
+      chain,
+      poller: {
+        battleMatch: (id) => pollerRef?.battleMatch(id),
+        latestBlock: () => pollerRef?.latestBlock() ?? 0,
+      },
+      contracts: { battle: config.battle },
+      gasLimits: { joinMatch: limit('joinMatch'), act: limit('act'), claimTimeout: limit('claimTimeout') },
+    });
+    app.route('/agent', battleRoutes({ runner, limiter: createBattleLimiter() }));
+  }
+
   mountLaterRoutes(app);
   mountSpa(app, deps.webDist, log);
 
@@ -242,11 +269,13 @@ export function composeApp(deps: ComposeDeps): Composed {
       stats,
       arena: config.arena,
       cards: config.cards,
+      battle: config.battle,
       operator: deps.operatorQueue,
       settleGas: BigInt(config.gasLimits.settle),
       bots: () => readBots(config.dataDir),
       getAgentMessage,
     });
+    pollerRef = poller;
     log(
       `[server] Monicard API on port ${config.port} (deployment ${config.deployment}, chain ${config.chainId}), ` +
         `fund ${config.fundEnabled ? 'enabled' : 'disabled'}, loops: ws, watcher, poller`,

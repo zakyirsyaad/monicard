@@ -15,6 +15,8 @@ export type AppDeps = {
   arena: Hex;
   /** StakeVault address; omitted from /config when the deployment has none. */
   stakeVault?: Hex;
+  /** CardBattle address; omitted from /config when the deployment has none. */
+  battle?: Hex;
   gasLimits: Record<string, number>;
   batchMs: number;
   pullPrice: bigint;
@@ -108,6 +110,7 @@ export function buildApp(deps: AppDeps): Hono {
           cards: deps.cards,
           arena: deps.arena,
           ...(deps.stakeVault ? { stakeVault: deps.stakeVault } : {}),
+          ...(deps.battle ? { battle: deps.battle } : {}),
         },
         gasLimits: deps.gasLimits,
         gasPrice: gasPrice.toString(),

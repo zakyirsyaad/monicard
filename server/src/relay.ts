@@ -1,4 +1,5 @@
 import { blitzArenaAbi, nadCardsAbi, stakeVaultAbi, type Hex } from '@nad/shared';
+import { battleAbi } from './battleAbi';
 import {
   decodeFunctionData,
   isHex,
@@ -26,6 +27,7 @@ const KNOWN_TX_ERRORS = ['already known', 'nonce too low', 'replacement transact
 const CARDS_FNS = ['freePull', 'paidPull'] as const;
 const ARENA_FNS = ['createDuel', 'joinDuel', 'attack', 'settle'] as const;
 const VAULT_FNS = ['stake', 'claim'] as const;
+const BATTLE_FNS = ['createMatch', 'joinMatch', 'act', 'claimTimeout'] as const;
 
 /** Inclusive bounds of the value a `stake` tx may carry (mirrors StakeVault MIN_STAKE / MAX_STAKE). */
 export const STAKE_MIN_WEI = parseEther('0.001');
@@ -37,6 +39,8 @@ export type RelayConfig = {
   arena: Hex;
   /** StakeVault address; vault txs are only relayed when set. */
   stakeVault?: Hex;
+  /** CardBattle address; battle txs are only relayed when set. */
+  battle?: Hex;
   gasLimits: Record<string, number>;
   pullPrice: bigint;
 };
@@ -74,18 +78,24 @@ export function validateRawTx(raw: Hex, cfg: RelayConfig): Validation {
   return { ok: true, hash: keccak256(raw), fn, gas, maxFeePerGas, value };
 }
 
-type Target = 'cards' | 'arena' | 'vault';
+type Target = 'cards' | 'arena' | 'vault' | 'battle';
 
-const TARGET_ABIS = { cards: nadCardsAbi, arena: blitzArenaAbi, vault: stakeVaultAbi } as const;
-const TARGET_FNS: Record<Target, readonly string[]> = { cards: CARDS_FNS, arena: ARENA_FNS, vault: VAULT_FNS };
+const TARGET_ABIS = { cards: nadCardsAbi, arena: blitzArenaAbi, vault: stakeVaultAbi, battle: battleAbi } as const;
+const TARGET_FNS: Record<Target, readonly string[]> = {
+  cards: CARDS_FNS,
+  arena: ARENA_FNS,
+  vault: VAULT_FNS,
+  battle: BATTLE_FNS,
+};
 
-/** Which of our contracts `to` is (case-insensitive); the vault only counts when configured. */
+/** Which of our contracts `to` is (case-insensitive); vault/battle only count when configured. */
 function targetContract(to: string | null | undefined, cfg: RelayConfig): Target | null {
   const addr = to?.toLowerCase();
   if (!addr) return null;
   if (addr === cfg.cards.toLowerCase()) return 'cards';
   if (addr === cfg.arena.toLowerCase()) return 'arena';
   if (cfg.stakeVault !== undefined && addr === cfg.stakeVault.toLowerCase()) return 'vault';
+  if (cfg.battle !== undefined && addr === cfg.battle.toLowerCase()) return 'battle';
   return null;
 }
 
@@ -200,14 +210,25 @@ function shortMessage(err: unknown): string {
   return text.slice(0, MAX_ERROR_MESSAGE_CHARS);
 }
 
-function decodeEvents(receipt: TxReceipt, cfg: RelayConfig): { tokenId?: string; duelId?: string } {
+function decodeEvents(receipt: TxReceipt, cfg: RelayConfig): { tokenId?: string; duelId?: string; matchId?: string } {
   const from = (addr: Hex) => receipt.logs.filter((l) => l.address.toLowerCase() === addr.toLowerCase());
   const minted = parseEventLogs({ abi: nadCardsAbi, eventName: 'CardMinted', logs: from(cfg.cards) })[0];
   const created = parseEventLogs({ abi: blitzArenaAbi, eventName: 'DuelCreated', logs: from(cfg.arena) })[0];
+  const matchId = cfg.battle === undefined ? undefined : matchIdFrom(receipt, cfg.battle);
   return {
     ...(minted ? { tokenId: minted.args.tokenId.toString() } : {}),
     ...(created ? { duelId: created.args.id.toString() } : {}),
+    ...(matchId !== undefined ? { matchId } : {}),
   };
+}
+
+/** `MatchCreated` for createMatch, `MatchJoined` for joinMatch; both carry the id. */
+function matchIdFrom(receipt: TxReceipt, battle: Hex): string | undefined {
+  const logs = receipt.logs.filter((l) => l.address.toLowerCase() === battle.toLowerCase());
+  const created = parseEventLogs({ abi: battleAbi, eventName: 'MatchCreated', logs })[0];
+  if (created) return created.args.id.toString();
+  const joined = parseEventLogs({ abi: battleAbi, eventName: 'MatchJoined', logs })[0];
+  return joined ? joined.args.id.toString() : undefined;
 }
 
 const TRANSPORT_ERROR_NAMES = ['HttpRequestError', 'TimeoutError', 'WebSocketRequestError'];

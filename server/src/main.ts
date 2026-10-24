@@ -20,6 +20,7 @@ async function buildComposed() {
   const pullPrice = await chain.call((client) =>
     client.readContract({ address: env.cards, abi: nadCardsAbi, functionName: 'PULL_PRICE' }),
   );
+  const agentAccount = privateKeyToAccount(env.AGENT_KEY);
 
   return composeApp({
     config: {
@@ -29,6 +30,7 @@ async function buildComposed() {
       cards: env.cards,
       arena: env.arena,
       stakeVault: env.stakeVault,
+      battle: env.battle,
       gasLimits: env.gasLimits,
       batchMs: env.BATCH_MS,
       event: { name: env.EVENT_NAME, sponsor: env.EVENT_SPONSOR ?? null },
@@ -38,10 +40,11 @@ async function buildComposed() {
       fundBudgetMon: env.FUND_BUDGET_MON,
     },
     chain,
-    agent: privateKeyToAccount(env.AGENT_KEY).address,
+    agent: agentAccount.address,
     pullPrice,
     masterQueue: createWalletQueue(privateKeyToAccount(env.MASTER_KEY), chain),
     operatorQueue: createWalletQueue(privateKeyToAccount(env.OPERATOR_KEY), chain),
+    agentQueue: env.battle === undefined ? undefined : createWalletQueue(agentAccount, chain),
     accounts: createAccountReader({ chain, cards: env.cards }),
     webDist: join(env.ROOT, 'web', 'dist'),
     log,

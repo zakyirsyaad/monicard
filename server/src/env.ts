@@ -54,6 +54,7 @@ const deploymentSchema = z.object({
   cards: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
   arena: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
   stakeVault: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
+  battle: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
   deployBlock: z.number().int().nonnegative().optional(),
   gasLimits: z.object({
     freePull: z.number().int().positive(),
@@ -64,6 +65,10 @@ const deploymentSchema = z.object({
     settle: z.number().int().positive(),
     stake: z.number().int().positive().optional(),
     claim: z.number().int().positive().optional(),
+    createMatch: z.number().int().positive().optional(),
+    joinMatch: z.number().int().positive().optional(),
+    act: z.number().int().positive().optional(),
+    claimTimeout: z.number().int().positive().optional(),
   }),
 });
 
@@ -95,6 +100,7 @@ export type Env = {
   cards: Hex;
   arena: Hex;
   stakeVault?: Hex;
+  battle?: Hex;
   gasLimits: GasLimits;
 };
 
@@ -144,6 +150,7 @@ function buildEnv(): Env {
     cards: deployment.cards as Hex,
     arena: deployment.arena as Hex,
     stakeVault: deployment.stakeVault as Hex | undefined,
+    battle: deployment.battle as Hex | undefined,
     gasLimits: deployment.gasLimits,
   };
 }

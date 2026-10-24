@@ -1,9 +1,11 @@
 import { blitzArenaAbi, decodeDuels, type DuelStatus, type DuelView, type Hex } from '@nad/shared';
 import { encodeFunctionData, parseEventLogs } from 'viem';
+import { battleAbi } from './battleAbi';
+import { decodeMatches, matchWindow, pickFeaturedMatch, type BattleMatch } from './battle';
 import type { ChainLike } from './chainTypes';
 import type { ReceiptHub, TxReceipt } from './receiptHub';
 import type { StatsSnapshot } from './stats';
-import type { AgentMsg, ConnectCallback, DuelsMsg, StatsMsg, WsMessage } from './ws';
+import type { AgentMsg, ConnectCallback, DuelsMsg, MatchesMsg, StatsMsg, WsMessage } from './ws';
 
 /** Duels read per poll: the most recent ones; older duels are long finished. */
 export const ACTIVE_WINDOW_SIZE = 64;
@@ -23,6 +25,8 @@ export const MAX_SETTLES_IN_FLIGHT = 8;
 export const DUEL_COUNT_RESYNC_MS = 10_000;
 /** Duels outside the window that are re-read (`getDuels(id, 1)`) per poll. */
 export const STICKY_READS_PER_POLL = 8;
+/** Subscribed Card Battle matches outside the window that are re-read (`getMatch`) per poll. */
+export const STICKY_MATCH_READS_PER_POLL = 8;
 /** Poll/startup errors are logged at most once per this interval. */
 export const POLL_ERROR_LOG_MS = 60_000;
 const DEFAULT_RETRY_MS = 250;
@@ -74,10 +78,14 @@ export type PollerDeps = {
     onConnect(cb: ConnectCallback): void;
     /** Duel ids that scoped (phone) connections are subscribed to; keeps them out of the eviction window. */
     subscribedIds?(): ReadonlySet<string>;
+    /** Card Battle match ids that scoped connections are subscribed to. */
+    subscribedMatchIds?(): ReadonlySet<string>;
   };
   stats: { snapshot(): StatsSnapshot };
   arena: Hex;
   cards: Hex;
+  /** CardBattle address; battle polling is skipped when absent. */
+  battle?: Hex;
   operator: { send(req: { to: Hex; data: Hex; gas: bigint }): Promise<Hex> };
   settleGas: bigint;
   bots: () => Hex[];
@@ -93,6 +101,10 @@ export type Poller = {
   createdBlock(id: string): number | undefined;
   /** Cached duels, ordered by id. */
   duels(): DuelView[];
+  /** Cached Card Battle match (`getMatch` fallback for the agent runner), if read. */
+  battleMatch(id: string): BattleMatch | undefined;
+  /** Cached Card Battle matches, ordered by id. */
+  battleMatches(): BattleMatch[];
   /** Block the current duel snapshot was read at (0 before the first successful read). */
   latestBlock(): number;
   stop(): void;
@@ -103,6 +115,7 @@ type SettleState = { attempts: number; pending: boolean; retryAt: number; gaveUp
 const NO_IDS: ReadonlySet<string> = new Set();
 const isDecimalId = (id: string): boolean => /^\d{1,20}$/.test(id);
 const byIdAscending = (a: DuelView, b: DuelView): number => (BigInt(a.id) < BigInt(b.id) ? -1 : 1);
+const matchByIdAscending = (a: BattleMatch, b: BattleMatch): number => (BigInt(a.id) < BigInt(b.id) ? -1 : 1);
 /** Blocks to wait after the `attempts`-th settle send finished: 10, 20, 40, ... */
 const settleBackoff = (attempts: number): number => SETTLE_RETRY_BLOCKS * 2 ** (attempts - 1);
 
@@ -124,6 +137,9 @@ export function startPoller(deps: PollerDeps): Poller {
   let snapshotBlock = 0;
   let lastDuels: DuelsMsg | null = null;
   let lastStats: StatsMsg | null = null;
+  let lastMatches: MatchesMsg | null = null;
+  /** Card Battle window (plus subscribed matches outside it); `getMatch` is the runner's fallback. */
+  let matchCache = new Map<string, BattleMatch>();
   let treasury = '0';
   let treasuryAt: number | null = null;
   let countAt = 0;
@@ -146,6 +162,17 @@ export function startPoller(deps: PollerDeps): Poller {
     chain.call((c) =>
       c.readContract({ address: arena, abi: blitzArenaAbi, functionName: 'getDuels', args: [from, count] }),
     );
+
+  const readMatchCount = (): Promise<bigint> =>
+    chain.call((c) => c.readContract({ address: deps.battle!, abi: battleAbi, functionName: 'matchCount' }));
+
+  const readMatches = (from: bigint, count: bigint): Promise<readonly unknown[]> =>
+    chain.call((c) =>
+      c.readContract({ address: deps.battle!, abi: battleAbi, functionName: 'getMatches', args: [from, count] }),
+    );
+
+  const readMatch = (id: bigint): Promise<unknown> =>
+    chain.call((c) => c.readContract({ address: deps.battle!, abi: battleAbi, functionName: 'getMatch', args: [id] }));
 
   /** Counts DuelCreated logs: the count only ever grows to `id + 1`, so a startup race cannot double count. */
   function recordCreated(receipts: readonly TxReceipt[], block: bigint): void {
@@ -302,6 +329,43 @@ export function startPoller(deps: PollerDeps): Poller {
     }
   }
 
+  /** Reads the 64-match battle window plus subscribed matches outside it; never blocks the duel feed. */
+  async function refreshMatches(block: bigint): Promise<void> {
+    if (deps.battle === undefined) return;
+    try {
+      const total = await readMatchCount();
+      const { from, count } = matchWindow(total);
+      const window = count === 0n ? [] : decodeMatches(await readMatches(from, count), from);
+      const subs = ws.subscribedMatchIds?.() ?? NO_IDS;
+      const outside = [...subs]
+        .filter((id) => isDecimalId(id) && !window.some((m) => m.id === id))
+        .slice(0, STICKY_MATCH_READS_PER_POLL);
+      const extra: BattleMatch[] = [];
+      for (const id of outside) {
+        try {
+          const one = decodeMatches([await readMatch(BigInt(id))], BigInt(id))[0];
+          if (one) extra.push(one);
+        } catch {
+          // A failed sticky read keeps the previous cached view (added below).
+        }
+      }
+      const next = new Map<string, BattleMatch>();
+      for (const m of [...window, ...extra]) next.set(m.id, m);
+      for (const [id, m] of matchCache) if (subs.has(id) && !next.has(id)) next.set(id, m);
+      matchCache = next;
+      const bots = new Set(deps.bots().map((b) => b.toLowerCase() as Hex));
+      lastMatches = {
+        type: 'matches',
+        block: block.toString(),
+        featuredId: pickFeaturedMatch(window, bots),
+        matches: [...matchCache.values()].sort(matchByIdAscending),
+      };
+      ws.broadcast(lastMatches);
+    } catch (err) {
+      logError('getMatches failed', err);
+    }
+  }
+
   // ------------------------------------------------------------------ polling
 
   const statsMsg = (block: bigint): StatsMsg => ({
@@ -350,6 +414,7 @@ export function startPoller(deps: PollerDeps): Poller {
     publish(window, sticky, from, block);
     broadcastSnapshot(window, sticky, subs, block);
     settleDue([...cache.values()], Number(block));
+    await refreshMatches(block);
   }
 
   async function drain(): Promise<void> {
@@ -403,9 +468,17 @@ export function startPoller(deps: PollerDeps): Poller {
     return { ...msg, duels: [...msg.duels, cached] };
   }
 
-  // The hub's `send` applies the connection's scope filter, so a phone only sees its own duel.
+  /** Same idea for a match-scoped phone whose match has left the 64-window but is still cached. */
+  function replayMatchFor(msg: MatchesMsg, matchId: string): MatchesMsg {
+    const cached = matchCache.get(matchId);
+    if (!cached || msg.matches.some((m) => m.id === matchId)) return msg;
+    return { ...msg, matches: [...msg.matches, cached] };
+  }
+
+  // The hub's `send` applies the connection's scope filter, so a phone only sees its own duel/match.
   ws.onConnect((send, scope) => {
-    if (lastDuels) send(scope === 'all' ? lastDuels : replayFor(lastDuels, scope.duelId));
+    if (lastDuels) send(scope !== 'all' && 'duelId' in scope ? replayFor(lastDuels, scope.duelId) : lastDuels);
+    if (lastMatches) send(scope !== 'all' && 'matchId' in scope ? replayMatchFor(lastMatches, scope.matchId) : lastMatches);
     if (lastStats) send(lastStats);
     const agent = deps.getAgentMessage();
     if (agent) send(agent);
@@ -417,6 +490,8 @@ export function startPoller(deps: PollerDeps): Poller {
     getDuel: (id) => cache.get(id),
     createdBlock: (id) => created.get(id),
     duels: () => [...cache.values()].sort(byIdAscending),
+    battleMatch: (id) => matchCache.get(id),
+    battleMatches: () => [...matchCache.values()].sort(matchByIdAscending),
     latestBlock: () => snapshotBlock,
     stop() {
       stopped = true;
