@@ -19,15 +19,25 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
+const MASTER_KEY_PATTERN = /^0x[0-9a-fA-F]{64}$/;
+
+function parseEnvValue(raw: string): string {
+  const quote = raw[0];
+  if (quote === '"' || quote === "'") {
+    const end = raw.indexOf(quote, 1);
+    return end > 0 ? raw.slice(1, end) : raw.slice(1);
+  }
+  return raw.replace(/\s+#.*$/, '').trim();
+}
+
 function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
+    const trimmed = line.trim().replace(/^export\s+/, '');
     if (!trimmed || trimmed.startsWith('#')) continue;
     const eq = trimmed.indexOf('=');
     if (eq <= 0) continue;
-    const value = trimmed.slice(eq + 1).trim().replace(/^(['"])(.*)\1$/, '$2');
-    out[trimmed.slice(0, eq).trim()] = value;
+    out[trimmed.slice(0, eq).trim()] = parseEnvValue(trimmed.slice(eq + 1).trim());
   }
   return out;
 }
@@ -58,6 +68,7 @@ async function main(): Promise<void> {
   const key = env.MASTER_KEY;
   const rpc = env.RPC_URLS?.split(',')[0]?.trim();
   if (!key) fail('MASTER_KEY missing in .env');
+  if (!MASTER_KEY_PATTERN.test(key)) fail('MASTER_KEY in .env is not a 0x-prefixed 32-byte hex key');
   if (!rpc) fail('RPC_URLS missing in .env');
 
   const chain = defineChain({

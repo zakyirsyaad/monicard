@@ -9,6 +9,8 @@ export const MAX_PER_ADDRESS = 3;
 export const MAX_PER_IP_PER_10_MIN = 10;
 export const IP_WINDOW_MS = 600_000;
 export const FUND_RECEIPT_TIMEOUT_MS = 20_000;
+/** After a confirmed funding, the RPC balance may be stale; treat the address as funded. */
+export const FUND_COOLDOWN_MS = 5_000;
 const TRANSFER_GAS = 21_000n;
 
 export type FundReason = 'limit_address' | 'limit_ip' | 'budget' | 'balance_ok';
@@ -30,7 +32,7 @@ export interface ReserveInput {
 }
 
 export type ReserveResult =
-  | { fund: true; release(): void; confirm(): void }
+  | { fund: true; release(): void; confirm(at?: number): void }
   | { fund: false; reason: FundReason };
 
 export interface FundLimiter {
@@ -107,10 +109,12 @@ function saveLedger(path: string, state: LedgerState, now: number): void {
 export function createFundLimiter(cfg: FundLimiterConfig): FundLimiter {
   const state = loadLedger(cfg.ledgerPath);
   const inFlight = new Set<string>();
+  const cooldownUntil = new Map<string, number>();
 
   function check(addr: string, input: ReserveInput): FundReason | null {
     if (input.balanceWei >= cfg.thresholdWei) return 'balance_ok';
     if (inFlight.has(addr)) return 'balance_ok';
+    if ((cooldownUntil.get(addr) ?? 0) > input.now) return 'balance_ok';
     if ((state.perAddress.get(addr) ?? 0) >= cfg.maxPerAddress) return 'limit_address';
     const recent = (state.ipLog.get(input.ip) ?? []).filter((t) => t > input.now - IP_WINDOW_MS);
     if (recent.length >= cfg.maxPerIpPer10Min) return 'limit_ip';
@@ -130,8 +134,9 @@ export function createFundLimiter(cfg: FundLimiterConfig): FundLimiter {
     let settled = false;
     return {
       fund: true,
-      confirm() {
+      confirm(at: number = Date.now()) {
         inFlight.delete(addr);
+        cooldownUntil.set(addr, at + FUND_COOLDOWN_MS);
       },
       release() {
         if (settled) return;
@@ -187,6 +192,9 @@ function parseAddress(body: unknown): Hex | null {
   return typeof a === 'string' && isAddress(a, { strict: false }) ? (a as Hex) : null;
 }
 
+class RevertedError extends Error {}
+
+/** Sends the transfer; resolves after the receipt, or with the hash if the receipt wait fails. */
 async function transfer(address: Hex, deps: FundDeps): Promise<Hex> {
   const hash = await deps.queue.send({
     to: address,
@@ -194,8 +202,14 @@ async function transfer(address: Hex, deps: FundDeps): Promise<Hex> {
     gas: TRANSFER_GAS,
     value: deps.amountWei ?? FUND_AMOUNT_WEI,
   });
-  const receipt = await deps.hub.wait(hash, FUND_RECEIPT_TIMEOUT_MS);
-  if (receipt.status !== 'success') throw new Error(`transfer reverted (${hash})`);
+  try {
+    const receipt = await deps.hub.wait(hash, FUND_RECEIPT_TIMEOUT_MS);
+    if (receipt.status !== 'success') throw new RevertedError(`transfer reverted (${hash})`);
+  } catch (e) {
+    if (e instanceof RevertedError) throw e;
+    // The tx was accepted by the RPC and will likely land: keep the charge.
+    console.error('[fund] receipt wait failed, keeping charge:', e instanceof Error ? e.message : e);
+  }
   return hash;
 }
 
@@ -216,7 +230,7 @@ export async function handleFund(body: unknown, ip: string, deps: FundDeps): Pro
   if (!r.fund) return { status: 200, json: { funded: false, reason: r.reason } };
   try {
     const txHash = await transfer(address, deps);
-    r.confirm();
+    r.confirm(Date.now());
     return { status: 200, json: { funded: true, txHash } };
   } catch (e) {
     r.release();
