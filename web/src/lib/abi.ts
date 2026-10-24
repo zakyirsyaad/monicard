@@ -2,7 +2,7 @@ import { parseAbi } from 'viem';
 
 // Single import point for contract ABIs: re-exports @nad/shared (generated from the contract build artifacts, `as const`).
 // Never import `@nad/shared/bytecode` from web.
-export { nadCardsAbi, blitzArenaAbi } from '@nad/shared';
+export { nadCardsAbi, blitzArenaAbi, battleStakeVaultAbi } from '@nad/shared';
 
 // Local facade of contracts/src/StakeVault.sol. TODO: switch to the `stakeVaultAbi` export of @nad/shared once it exists.
 export const stakeVaultAbi = parseAbi([

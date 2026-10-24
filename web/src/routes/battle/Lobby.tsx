@@ -8,6 +8,8 @@ import { shortHex } from '../../lib/format';
 import { battleErrorText } from '../../lib/battle/errors';
 import type { WalletStep } from '../../lib/battle/fund';
 import { useConfig } from '../../lib/useConfig';
+import { battleStakeAvailable, monLabel, prepareBattleStake, stakeBattle } from '../../lib/battle/stake';
+import { StakeChips } from './StakeChips';
 import { battleAvailable, challengeBattleAgent, createBattle } from '../../lib/battle/actions';
 
 type Busy = 'create' | 'agent' | null;
@@ -20,11 +22,14 @@ const RULES = [
 
 function SharePanel({
   id,
+  stakeWei,
   onFight,
   onNew,
   busy,
 }: {
   id: string;
+  /** The creator's stake in wei; 0 for a free match. */
+  stakeWei: bigint;
   onFight: () => void;
   onNew: () => void;
   busy: Busy;
@@ -51,6 +56,7 @@ function SharePanel({
         </h2>
         <span className="data text-ink-muted">Match #{id}</span>
       </div>
+      {stakeWei > 0n && <p className="data text-ink">Stake {monLabel(stakeWei)} MON</p>}
       <div className="flex items-center gap-4">
         <div className="shrink-0 rounded-card border border-line bg-surface p-2 text-ink">
           <QRCodeSVG value={link} size={124} fgColor="currentColor" bgColor="transparent" />
@@ -69,9 +75,11 @@ function SharePanel({
       </div>
       <div className="flex flex-col gap-3">
         <Button onClick={() => navigate(`/battle/${id}`)}>Open match room</Button>
-        <Button variant="secondary" busy={busy === 'agent'} busyLabel="AI Agent joining…" disabled={busy !== null} onClick={onFight}>
-          Fight AI Agent
-        </Button>
+        {stakeWei === 0n && (
+          <Button variant="secondary" busy={busy === 'agent'} busyLabel="AI Agent joining…" disabled={busy !== null} onClick={onFight}>
+            Fight AI Agent
+          </Button>
+        )}
         <Button variant="secondary" disabled={busy !== null} onClick={onNew}>
           New match
         </Button>
@@ -86,35 +94,49 @@ export function BattleLobby() {
   const [busy, setBusy] = useState<Busy>(null);
   const [phase, setPhase] = useState<WalletStep>('send');
   const [createdId, setCreatedId] = useState<string | null>(null);
+  const [stakeWei, setStakeWei] = useState<bigint>(0n);
+  const [createdStake, setCreatedStake] = useState<bigint>(0n);
+  const [staking, setStaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const address = burnerAccount().address;
 
   const available = battleAvailable(config);
   const ready = config !== null && available;
   const unavailable = failed || (config !== null && !available);
-  const walletLabel = (normal: string): string => (phase === 'wallet' ? 'Preparing your wallet…' : normal);
+  const walletLabel = (normal: string): string =>
+    phase === 'wallet' ? 'Preparing your wallet…' : staking ? `Staking ${monLabel(stakeWei)} MON…` : normal;
 
-  const run = async (kind: Exclude<Busy, null>, action: (onStep: (step: WalletStep) => void) => Promise<string | null>) => {
+  /** Free matches take exactly the old path. A stake adds funding up front and one stake tx after the create. */
+  const create = async () => {
     if (busy || !config) return;
-    setBusy(kind);
+    const chosen = battleStakeAvailable(config) ? stakeWei : 0n;
+    setBusy('create');
     setPhase('wallet');
     setError(null);
+    let id: string | null = null;
     try {
-      const id = await action((step) => setPhase(step));
-      if (id !== null) setCreatedId(id);
+      if (chosen > 0n) await prepareBattleStake(config, chosen, (step) => setPhase(step));
+      id = (await createBattle(config, (step) => setPhase(step))).id;
+      if (id === null) {
+        setError("Couldn't create the match. Try again.");
+        return;
+      }
+      setCreatedId(id);
+      setCreatedStake(0n);
+      if (chosen > 0n) {
+        setStaking(true);
+        await stakeBattle(config, id, chosen);
+        setCreatedStake(chosen);
+      }
     } catch (err) {
-      setError(battleErrorText(err, { fn: 'createMatch' }));
+      const text = battleErrorText(err, { fn: id === null ? 'createMatch' : 'battleStake' });
+      setError(id === null ? text : `${text} The match is open without a stake.`);
     } finally {
+      setStaking(false);
       setBusy(null);
       setPhase('send');
     }
   };
-
-  const create = () =>
-    run('create', async (onStep) => {
-      const result = await createBattle(config as NonNullable<typeof config>, onStep);
-      return result.id;
-    });
 
   const fightAgent = async () => {
     if (busy || !config) return;
@@ -179,22 +201,25 @@ export function BattleLobby() {
         {createdId ? (
           <SharePanel
             id={createdId}
+            stakeWei={createdStake}
             busy={busy}
             onFight={() => void fightAgent()}
             onNew={() => {
               setCreatedId(null);
+              setCreatedStake(0n);
               setError(null);
             }}
           />
         ) : (
           <section className="mt-auto flex flex-col gap-3" aria-label="Start a match">
+            <StakeChips config={config} value={stakeWei} onChange={setStakeWei} disabled={busy !== null} />
             <Button
               busy={busy === 'create'}
               busyLabel={walletLabel('Creating match…')}
               disabled={!ready || busy !== null}
               onClick={() => void create()}
             >
-              Create match
+              {stakeWei > 0n && battleStakeAvailable(config) ? `Create and stake ${monLabel(stakeWei)} MON` : 'Create match'}
             </Button>
             <Button
               variant="secondary"

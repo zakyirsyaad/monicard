@@ -8,7 +8,7 @@ import { burnerAccount } from '../../lib/player';
 import { useArenaSocket } from '../../lib/useArenaSocket';
 import { useConfig } from '../../lib/useConfig';
 import { actBattle, challengeBattleAgent, claimBattleTimeout, joinBattle } from '../../lib/battle/actions';
-import { battleErrorText } from '../../lib/battle/errors';
+import { OPPONENT_UNSTAKED_MESSAGE, battleErrorText } from '../../lib/battle/errors';
 import type { WalletStep } from '../../lib/battle/fund';
 import { battleMock } from '../../lib/battle/mock';
 import {
@@ -38,6 +38,8 @@ import {
 } from '../../lib/battle/rules';
 import type { DrawCard } from '../../lib/battle/rules';
 import { isBattleMock, useMatch } from '../../lib/battle/useMatch';
+import { battleStakeAvailable, boardStakeLabel, hasStake, prepareBattleStake, stakeBattle, stakeToJoin, stakingOpen } from '../../lib/battle/stake';
+import { useBattleStake } from '../../lib/battle/useBattleStake';
 import type { BattleSide, MatchView } from '../../lib/battle/types';
 import { BattleResult } from './ResultOverlay';
 import { BoardCard, DrawReveal, HandCard, Pile, ScoreDots } from './cards';
@@ -114,6 +116,8 @@ function Battle({ id }: { id: string }) {
   const { config } = useConfig();
   const address = burnerAccount().address;
   const state = useMatch(id, config);
+  const stakeOn = battleStakeAvailable(config);
+  const stakeState = useBattleStake(config, id, stakeOn && state.match !== null, state.match?.status ?? 'none');
   const arena = useArenaSocket({ duelId: id });
   const match = state.match;
   const side = match ? mySide(match, address) : null;
@@ -123,6 +127,7 @@ function Battle({ id }: { id: string }) {
   const [busy, setBusy] = useState<Busy>(null);
   const [phase, setPhase] = useState<WalletStep>('send');
   const [error, setError] = useState<string | null>(null);
+  const [stakeNote, setStakeNote] = useState<string | null>(null);
   const [damage, setDamage] = useState<{ key: number; side: BattleSide; amount: number } | null>(null);
   const [drawn, setDrawn] = useState<{ key: number; card: DrawCard } | null>(null);
   const [foeDraw, setFoeDraw] = useState<{ key: number; count: number } | null>(null);
@@ -264,11 +269,23 @@ function Battle({ id }: { id: string }) {
 
   const join = () => {
     if (!config || !match) return;
+    // Snapshot the stake the joiner has to match; a failed/unknown read falls back to a free join.
+    const required = stakeOn ? stakeToJoin(stakeState.stake) : 0n;
     void run(
       'join',
       async (onStep) => {
+        setStakeNote(null);
+        if (required > 0n) await prepareBattleStake(config, required, onStep);
         const result = await joinBattle(config, match.id, onStep);
         if (result.status !== 'success') throw new Error('joinMatch reverted');
+        if (required === 0n) return;
+        // The stake follows the join after the reserve-balance gap. A failed stake never undoes the join.
+        try {
+          await stakeBattle(config, match.id, required);
+        } catch (err) {
+          setStakeNote(`${battleErrorText(err, { fn: 'battleStake' })} You can keep playing this match for free.`);
+        }
+        stakeState.refresh();
       },
       (err) =>
         err instanceof Error && err.message === 'joinMatch reverted'
@@ -356,6 +373,8 @@ function Battle({ id }: { id: string }) {
         busy={busy === 'join' || busy === 'agent' ? busy : null}
         joinBusyLabel={walletLabel('Joining…')}
         error={error}
+        stake={stakeState.stake}
+        stakeLoading={stakeOn && stakeState.status === 'loading'}
         onJoin={join}
         onFightAgent={fightAgent}
       />
@@ -363,8 +382,16 @@ function Battle({ id }: { id: string }) {
   }
 
   if (match.status !== 'Active') {
-    return <BattleResult match={match} side={side} config={config} />;
+    return <BattleResult match={match} side={side} config={config} stakeState={stakeOn ? stakeState : null} />;
   }
+
+  const potText = stakeOn ? boardStakeLabel(stakeState.stake) : null;
+  const stakeRead = stakeState.stake;
+  const oneSided =
+    stakeOn && hasStake(stakeRead) && stakeRead.p1Staked !== stakeRead.p2Staked && !stakingOpen(match);
+  // Staking is closed and only one side put MON in: that stake comes back on claim.
+  const unstakedNote =
+    oneSided && side !== null && (stakeRead?.p1Staked ? 1 : 2) === side ? OPPONENT_UNSTAKED_MESSAGE : null;
 
   const banner =
     side === null
@@ -429,6 +456,7 @@ function Battle({ id }: { id: string }) {
               </span>
             </div>
           </div>
+          {potText && <p className="data mt-1 text-ink-muted">{potText}</p>}
           <div className="mt-2 h-0.5 w-full bg-surface-sunken" aria-hidden="true">
             <div
               className={`h-full ${myTurn ? 'bg-purple' : 'bg-berry'}`}
@@ -560,6 +588,14 @@ function Battle({ id }: { id: string }) {
           {error && (
             <div className="mb-2">
               <Notice>{error}</Notice>
+            </div>
+          )}
+          {unstakedNote && !stakeNote && (
+            <p className="label mb-2 text-ink-muted">{unstakedNote}</p>
+          )}
+          {stakeNote && (
+            <div className="mb-2">
+              <Notice tone="info">{stakeNote}</Notice>
             </div>
           )}
           {canClaim && (

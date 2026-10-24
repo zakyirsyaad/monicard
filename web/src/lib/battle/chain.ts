@@ -14,16 +14,16 @@ const monadTestnet = defineChain({
   rpcUrls: { default: { http: [PUBLIC_RPC] } },
 });
 
-const client = createPublicClient({ chain: monadTestnet, transport: http(PUBLIC_RPC) });
+export const battleClient = createPublicClient({ chain: monadTestnet, transport: http(PUBLIC_RPC) });
 
 export async function readBlockNumber(): Promise<number> {
-  return Number(await client.getBlockNumber());
+  return Number(await battleClient.getBlockNumber());
 }
 
 /** `getMatch(id)`; null when the call reverts (no such match) or the RPC fails. */
 export async function readMatch(address: Hex, id: string): Promise<MatchView | null> {
   try {
-    const raw = await client.readContract({
+    const raw = await battleClient.readContract({
       address,
       abi: battleAbi,
       functionName: 'getMatch',
@@ -39,7 +39,7 @@ export async function readMatch(address: Hex, id: string): Promise<MatchView | n
 
 export async function readMatchCount(address: Hex): Promise<number> {
   try {
-    return Number(await client.readContract({ address, abi: battleAbi, functionName: 'matchCount' }));
+    return Number(await battleClient.readContract({ address, abi: battleAbi, functionName: 'matchCount' }));
   } catch {
     return 0;
   }

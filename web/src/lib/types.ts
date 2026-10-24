@@ -7,7 +7,7 @@ import type { DuelStatus, DuelView } from '@nad/shared';
 export type Config = {
   chainId: 10143;
   /** `stakeVault` is optional (N15): the stake UI renders only when it and both stake gas limits are present. */
-  contracts: { cards: Hex; arena: Hex; stakeVault?: Hex };
+  contracts: { cards: Hex; arena: Hex; stakeVault?: Hex; battleStakeVault?: Hex };
   gasLimits: {
     freePull: number;
     paidPull: number;
@@ -17,6 +17,9 @@ export type Config = {
     settle: number;
     stake?: number;
     claim?: number;
+    /** BattleStakeVault.stake / .claim (optional, fall back to 300,000). */
+    battleStake?: number;
+    battleClaim?: number;
   };
   /** wei */
   gasPrice: string;

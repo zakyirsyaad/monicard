@@ -14,6 +14,7 @@ import {
   sideData,
   strikeDamage,
 } from './rules';
+import type { StakeView } from '../types';
 import type { BattleSide, MatchView } from './types';
 
 /**
@@ -42,6 +43,15 @@ export type ActReason =
 export type ActResult = { ok: true } | { ok: false; reason: ActReason };
 
 export type ClaimResult = { ok: true } | { ok: false; reason: 'not_found' | 'not_active' | 'not_your_turn' | 'too_early' };
+
+export type StakeReason = 'not_found' | 'not_participant' | 'closed' | 'already_staked' | 'bad_amount' | 'mismatch' | 'funds';
+export type StakeResult = { ok: true } | { ok: false; reason: StakeReason };
+
+const MIN_STAKE = 1_000_000_000_000_000n;
+const MAX_STAKE = 1_000_000_000_000_000_000n;
+const RAKE_BPS = 500n;
+/** Mock burners start with this much, so staking works without a server. */
+const MOCK_START_BALANCE = 5_000_000_000_000_000_000n;
 
 export type SimOptions = {
   now?: () => number;
@@ -95,6 +105,8 @@ export function createBattleSim(options: SimOptions = {}) {
   const agentMatches = new Set<string>();
   const listeners = new Set<Listener>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const stakes = new Map<string, StakeView>();
+  const balances = new Map<string, bigint>();
   let nextId = 1;
 
   const block = (): number => blockBase + Math.floor((now() - startedAt) / MOCK_BLOCK_MS);
@@ -319,6 +331,53 @@ export function createBattleSim(options: SimOptions = {}) {
     return { ok: true };
   }
 
+  const key = (address: string): string => address.toLowerCase();
+  const balanceOf = (address: string): bigint => balances.get(key(address)) ?? MOCK_START_BALANCE;
+
+  /** Mirrors BattleStakeVault.stake: participants only, Open or before any move, once each, equal amounts. */
+  function stake(id: string, address: string, amount: bigint): StakeResult {
+    const match = matches.get(id);
+    if (!match) return { ok: false, reason: 'not_found' };
+    const isP1 = sameAddress(match.p1, address);
+    if (!isP1 && !sameAddress(match.p2, address)) return { ok: false, reason: 'not_participant' };
+    const current = stakes.get(id) ?? { amount: 0n, p1Staked: false, p2Staked: false, claimed: false };
+    const open = match.status === 'Open' || (match.status === 'Active' && match.drawn1 <= 1 && match.drawn2 <= 1);
+    if (current.claimed || !open) return { ok: false, reason: 'closed' };
+    if (isP1 ? current.p1Staked : current.p2Staked) return { ok: false, reason: 'already_staked' };
+    if (amount < MIN_STAKE || amount > MAX_STAKE) return { ok: false, reason: 'bad_amount' };
+    const someone = current.p1Staked || current.p2Staked;
+    if (someone && amount !== current.amount) return { ok: false, reason: 'mismatch' };
+    if (balanceOf(address) < amount) return { ok: false, reason: 'funds' };
+    balances.set(key(address), balanceOf(address) - amount);
+    stakes.set(id, {
+      amount: someone ? current.amount : amount,
+      p1Staked: current.p1Staked || isP1,
+      p2Staked: current.p2Staked || !isP1,
+      claimed: false,
+    });
+    emit();
+    return { ok: true };
+  }
+
+  /** Mirrors BattleStakeVault.claim: a silent no-op unless the match is over. Returns whether state changed. */
+  function claim(id: string): boolean {
+    const match = matches.get(id);
+    const current = stakes.get(id);
+    if (!match || !current || current.claimed || (!current.p1Staked && !current.p2Staked)) return false;
+    if (match.status !== 'P1Won' && match.status !== 'P2Won') return false;
+    if (current.p1Staked && current.p2Staked) {
+      const pot = 2n * current.amount;
+      const winner = match.status === 'P1Won' ? match.p1 : match.p2;
+      balances.set(key(winner), balanceOf(winner) + pot - (pot * RAKE_BPS) / 10_000n);
+    } else {
+      const staker = current.p1Staked ? match.p1 : match.p2;
+      balances.set(key(staker), balanceOf(staker) + current.amount);
+    }
+    stakes.set(id, { ...current, claimed: true });
+    emit();
+    return true;
+  }
+
   function agentMove(match: MatchView): { handIdx: number; special: boolean } {
     const self = sideData(match, 2);
     const foe = sideData(match, 1);
@@ -367,6 +426,10 @@ export function createBattleSim(options: SimOptions = {}) {
     joinAgent,
     act,
     claimTimeout,
+    stake,
+    claim,
+    balanceOf,
+    getStake: (id: string): StakeView | null => stakes.get(id) ?? null,
     getMatch: (id: string): MatchView | null => matches.get(id) ?? null,
     listMatches: (): MatchView[] => [...matches.values()].reverse(),
     isAgentMatch: (id: string): boolean => agentMatches.has(id),
@@ -379,6 +442,8 @@ export function createBattleSim(options: SimOptions = {}) {
       timers.clear();
       matches.clear();
       agentMatches.clear();
+      stakes.clear();
+      balances.clear();
       nextId = 1;
       emit();
     },

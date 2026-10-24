@@ -4,7 +4,9 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '../../components/Button';
 import { Notice } from '../../components/Notice';
 import { shortHex } from '../../lib/format';
+import { boardStakeLabel, hasStake, monLabel, potLabel, stakeToJoin } from '../../lib/battle/stake';
 import type { BattleSide, MatchView } from '../../lib/battle/types';
+import type { StakeView } from '../../lib/types';
 
 export type OpenRoomProps = {
   match: MatchView;
@@ -13,15 +15,21 @@ export type OpenRoomProps = {
   /** "Joining…" or "Preparing your wallet…" while /fund settles. */
   joinBusyLabel: string;
   error: string | null;
+  /** Vault state of this match; null before the first read or when staking is off. */
+  stake?: StakeView | null;
+  /** The stake read is still in flight: joining waits so a staked match is never joined blind. */
+  stakeLoading?: boolean;
   onJoin: () => void;
   onFightAgent: () => void;
 };
 
 /** An Open match: the creator shares a QR, everyone else joins from the same link. */
-export function OpenRoom({ match, side, busy, joinBusyLabel, error, onJoin, onFightAgent }: OpenRoomProps) {
+export function OpenRoom({ match, side, busy, joinBusyLabel, error, stake = null, stakeLoading = false, onJoin, onFightAgent }: OpenRoomProps) {
   const [copied, setCopied] = useState(false);
   const link = `${window.location.origin}/battle/${match.id}`;
   const isCreator = side === 1;
+  const staked = hasStake(stake);
+  const joinStake = stakeToJoin(stake);
 
   const copy = async () => {
     try {
@@ -71,9 +79,12 @@ export function OpenRoom({ match, side, busy, joinBusyLabel, error, onJoin, onFi
                 </button>
               </div>
             </div>
-            <Button busy={busy === 'agent'} busyLabel="AI Agent joining…" disabled={busy !== null} onClick={onFightAgent}>
-              Fight AI Agent
-            </Button>
+            {staked && <p className="data text-ink">{boardStakeLabel(stake)}</p>}
+            {!staked && (
+              <Button busy={busy === 'agent'} busyLabel="AI Agent joining…" disabled={busy !== null} onClick={onFightAgent}>
+                Fight AI Agent
+              </Button>
+            )}
           </section>
         ) : (
           <section className="flex flex-col gap-3 rounded-card border border-line bg-surface-raised p-4" aria-label="Join match">
@@ -89,8 +100,22 @@ export function OpenRoom({ match, side, busy, joinBusyLabel, error, onJoin, onFi
               <span className="label text-ink-muted">Cards</span>
               <span className="data text-ink">10 draws each · onchain</span>
             </div>
-            <Button busy={busy === 'join'} busyLabel={joinBusyLabel} disabled={busy !== null} onClick={onJoin}>
-              Join match
+            {joinStake > 0n && (
+              <>
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="label text-ink-muted">Stake</span>
+                  <span className="data text-ink">Stake {monLabel(joinStake)} MON to join</span>
+                </div>
+                <p className="data text-ink-muted">{potLabel(joinStake)}</p>
+              </>
+            )}
+            <Button
+              busy={busy === 'join'}
+              busyLabel={joinBusyLabel}
+              disabled={busy !== null || stakeLoading}
+              onClick={onJoin}
+            >
+              {joinStake > 0n ? `Join and stake ${monLabel(joinStake)} MON` : 'Join match'}
             </Button>
           </section>
         )}
