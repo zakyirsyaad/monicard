@@ -8,7 +8,7 @@ export type BattleDeps = {
   limiter: IpLimiter;
 };
 
-export type BattleStatus = 200 | 400 | 409 | 429;
+export type BattleStatus = 200 | 400 | 409 | 429 | 500;
 export type BattleResponse = { status: BattleStatus; json: Record<string, unknown> };
 
 const DECIMAL_ID = /^\d{1,20}$/;
@@ -26,11 +26,9 @@ export function parseMatchId(body: unknown): bigint | null {
   return null;
 }
 
-const shortError = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
 /**
  * Framework-free `POST /agent/battle` handler: 200 ok, 400 bad_request,
- * 409 busy|not_open|send_failed, 429 limit_ip.
+ * 409 busy|not_open|send_failed, 429 limit_ip, 500 agent_error.
  */
 export async function handleBattle(body: unknown, ip: string, deps: BattleDeps): Promise<BattleResponse> {
   const matchId = parseMatchId(body);
@@ -42,8 +40,10 @@ export async function handleBattle(body: unknown, ip: string, deps: BattleDeps):
     if (result === 'ok') return OK;
     return { status: 409, json: { reason: result } };
   } catch (error) {
-    console.error(`[agent] battle failed: ${shortError(error)}`);
-    return { status: 409, json: { reason: 'busy' } };
+    // An unexpected failure is not a busy agent: keep the stack in the server log and
+    // answer 500 so the client can distinguish a hiccup from a real refusal.
+    console.error('[agent] battle failed', error);
+    return { status: 500, json: { reason: 'agent_error' } };
   }
 }
 

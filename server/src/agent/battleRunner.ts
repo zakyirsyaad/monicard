@@ -36,7 +36,9 @@ export type BattleRunner = {
 const JOIN_TIMEOUT_MS = 10_000;
 const ACT_TIMEOUT_MS = 10_000;
 /** Hard cap for one match; a stuck opponent must not pin the runner forever. */
-export const BATTLE_RUN_MS = 180_000;
+export const BATTLE_RUN_MS = 120_000;
+/** One wallet can carry this many matches; the queue serializes their transactions. */
+export const MAX_ACTIVE_MATCHES = 3;
 /** Poll interval while waiting for the opponent's move. */
 const WAIT_MS = 300;
 /** Chain re-read while idle even when the poller cache has not moved (~3 s). */
@@ -57,7 +59,7 @@ export function createBattleRunner(deps: BattleRunnerDeps): BattleRunner {
   const log = deps.log ?? defaultLog;
   const { queue, hub, chain, poller, contracts, gasLimits } = deps;
 
-  let busyFlag = false;
+  let activeMatches = 0;
 
   const readMatch = async (id: bigint, quiet = false): Promise<BattleMatch | null> => {
     try {
@@ -147,7 +149,22 @@ export function createBattleRunner(deps: BattleRunnerDeps): BattleRunner {
    */
   async function play(id: bigint, policy: Policy, joinedAtBlock: number): Promise<BattleResult> {
     const deadline = now() + BATTLE_RUN_MS;
+    let blockReadFailed = false;
+    /** Live block for the turn clock; the poller cache may be empty or behind. */
+    const readBlock = async (): Promise<number> => {
+      try {
+        return Number(await chain.call((client) => client.getBlockNumber()));
+      } catch (err) {
+        if (!blockReadFailed) {
+          blockReadFailed = true;
+          log(`battle: getBlockNumber failed for match ${id}`, err);
+        }
+        return poller.latestBlock();
+      }
+    };
+
     let confirmedBlock = joinedAtBlock;
+    let latestBlock = await readBlock();
     let match = await readConfirmed(id, confirmedBlock);
     let idle = 0;
     let claimAttempts = 0;
@@ -172,7 +189,7 @@ export function createBattleRunner(deps: BattleRunnerDeps): BattleRunner {
         continue;
       }
 
-      if (timeoutDue(match, poller.latestBlock())) {
+      if (timeoutDue(match, latestBlock)) {
         if (claimAttempts >= MAX_CLAIM_ATTEMPTS) {
           log(`battle: claimTimeout(${id}) still reverting after ${MAX_CLAIM_ATTEMPTS} attempts`);
           return 'send_failed';
@@ -194,6 +211,7 @@ export function createBattleRunner(deps: BattleRunnerDeps): BattleRunner {
       const moved = cached !== undefined && cached.lastMoveBlock > match.lastMoveBlock;
       if (moved || idle >= CACHE_REFRESH_EVERY) {
         match = await readConfirmed(id, confirmedBlock);
+        latestBlock = await readBlock();
         idle = 0;
       }
     }
@@ -201,18 +219,18 @@ export function createBattleRunner(deps: BattleRunnerDeps): BattleRunner {
     return 'ok';
   }
 
-  /** Starts the background loop and hands the busy flag to it. */
+  /** Starts the background loop and hands its match slot to it. */
   function startPlay(id: bigint, fromBlock: number, policy: Policy): void {
     void play(id, policy, fromBlock)
       .catch((err: unknown) => log(`battle: match ${id} play failed`, err))
       .finally(() => {
-        busyFlag = false;
+        activeMatches -= 1;
       });
   }
 
   async function battle(matchId: bigint): Promise<BattleResult> {
-    if (busyFlag) return 'busy';
-    busyFlag = true;
+    if (activeMatches >= MAX_ACTIVE_MATCHES) return 'busy';
+    activeMatches += 1;
 
     let handedOff = false;
     try {
@@ -255,9 +273,9 @@ export function createBattleRunner(deps: BattleRunnerDeps): BattleRunner {
       log(`battle: match ${matchId} failed`, err);
       return 'send_failed';
     } finally {
-      if (!handedOff) busyFlag = false;
+      if (!handedOff) activeMatches -= 1;
     }
   }
 
-  return { battle, busy: () => busyFlag };
+  return { battle, busy: () => activeMatches >= MAX_ACTIVE_MATCHES };
 }

@@ -51,14 +51,15 @@ describe('handleBattle', () => {
     }
   });
 
-  test('runner throw becomes 409 busy and is logged', async () => {
+  test('runner throw becomes 500 agent_error and logs the full error', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const err = new Error('boom');
     const battle = vi.fn(async () => {
-      throw new Error('boom');
+      throw err;
     });
     const deps: BattleDeps = { runner: { battle }, limiter: createBattleLimiter() };
-    expect(await handleBattle({ matchId: 1 }, IP, deps)).toEqual({ status: 409, json: { reason: 'busy' } });
-    expect(spy).toHaveBeenCalled();
+    expect(await handleBattle({ matchId: 1 }, IP, deps)).toEqual({ status: 500, json: { reason: 'agent_error' } });
+    expect(spy).toHaveBeenCalledWith('[agent] battle failed', err);
     spy.mockRestore();
   });
 
