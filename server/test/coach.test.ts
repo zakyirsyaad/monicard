@@ -1,4 +1,6 @@
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import type { ZodType } from 'zod';
+import type { Llm } from '../src/llm';
 import type { Hex } from '@nad/shared';
 import type { DuelSummary } from '../src/sim/types';
 import {
@@ -9,10 +11,13 @@ import {
   type Policy,
 } from '../src/agent/policy';
 import {
+  MAX_DELTA,
   MAX_LESSONS,
   MAX_LESSON_CHARS,
+  MIN_DELTA,
   applyCoach,
   clampLesson,
+  llmCoach,
   mergeTrained,
   onDuelSettled,
   ruleCoach,
@@ -384,5 +389,105 @@ describe('mergeTrained', () => {
     const frozenLive = deepFreeze((JSON.parse(JSON.stringify(live)) as AgentData));
     const frozenTrained = deepFreeze((JSON.parse(JSON.stringify(trained)) as AgentData));
     expect(() => mergeTrained(frozenLive, frozenTrained)).not.toThrow();
+  });
+});
+
+describe('llmCoach', () => {
+  afterEach(() => vi.useRealTimers());
+
+  type Call = { system: string; user: string; timeoutMs: number };
+  const fakeLlm = (produce: () => Promise<unknown>): Llm & { calls: Call[] } => {
+    const calls: Call[] = [];
+    return {
+      calls,
+      json: async <T>(system: string, user: string, schema: ZodType<T>, timeoutMs: number): Promise<T> => {
+        calls.push({ system, user, timeoutMs });
+        return schema.parse(await produce());
+      },
+    };
+  };
+
+  const lost = summary({ result: 'loss', skillUsedAtHpPct: null, hpTimeline: [{ block: 100, myHp: 900, oppHp: 1200 }] });
+
+  test('passes a valid LLM output through', async () => {
+    const llm = fakeLlm(async () => ({ lesson: 'Fire the skill sooner next time.', thresholdDelta: 5, finisher: false }));
+    expect(await llmCoach(lost, policy(), llm, rng)).toEqual({
+      lesson: 'Fire the skill sooner next time.',
+      thresholdDelta: 5,
+      finisher: false,
+    });
+  });
+
+  test('clamps the delta to [-10, 10] and the lesson to 120 characters', async () => {
+    const long = 'x'.repeat(300);
+    const high = await llmCoach(lost, policy(), fakeLlm(async () => ({ lesson: long, thresholdDelta: 50, finisher: true })), rng);
+    expect(high.thresholdDelta).toBe(MAX_DELTA);
+    expect(high.lesson).toHaveLength(MAX_LESSON_CHARS);
+    const low = await llmCoach(lost, policy(), fakeLlm(async () => ({ lesson: 'ok', thresholdDelta: -99, finisher: true })), rng);
+    expect(low.thresholdDelta).toBe(MIN_DELTA);
+  });
+
+  test('strips emoji and control characters from the lesson', async () => {
+    const llm = fakeLlm(async () => ({ lesson: `Hold on \u{1F525}${String.fromCharCode(7)}  longer.`, thresholdDelta: 0, finisher: true }));
+    expect((await llmCoach(lost, policy(), llm, rng)).lesson).toBe('Hold on longer.');
+  });
+
+  test('falls back to ruleCoach when thresholdDelta is not a number', async () => {
+    const llm = fakeLlm(async () => ({ lesson: 'x', thresholdDelta: 'abc', finisher: true }));
+    expect(await llmCoach(lost, policy(), llm, rng)).toEqual(ruleCoach(lost, policy(), rng));
+  });
+
+  test('falls back to ruleCoach on a non-integer delta, a missing field or an empty lesson', async () => {
+    for (const bad of [
+      { lesson: 'x', thresholdDelta: 2.5, finisher: true },
+      { lesson: 'x', thresholdDelta: 2 },
+      { lesson: '   ', thresholdDelta: 2, finisher: true },
+      'not an object',
+    ]) {
+      expect(await llmCoach(lost, policy(), fakeLlm(async () => bad), rng)).toEqual(ruleCoach(lost, policy(), rng));
+    }
+  });
+
+  test('falls back to ruleCoach when the LLM throws', async () => {
+    const llm = fakeLlm(() => Promise.reject(new Error('HTTP 500')));
+    expect(await llmCoach(lost, policy(), llm, rng)).toEqual(ruleCoach(lost, policy(), rng));
+  });
+
+  test('falls back to ruleCoach on timeout (LLM takes 5 s, timeoutMs is 50)', async () => {
+    vi.useFakeTimers();
+    const slow = fakeLlm(() => new Promise((resolve) => setTimeout(() => resolve({ lesson: 'x', thresholdDelta: 1, finisher: true }), 5000)));
+    const pending = llmCoach(lost, policy(), slow, rng, 50);
+    await vi.advanceTimersByTimeAsync(60);
+    expect(await pending).toEqual(ruleCoach(lost, policy(), rng));
+  });
+
+  test('fallback uses the context for the finisher check', async () => {
+    const ctx = { atk: 12, mult: 100, myMaxHp: 1500 };
+    const s = summary({ result: 'loss', skillUsedAtHpPct: null, hpTimeline: [{ block: 110, myHp: 150, oppHp: 400 }] });
+    const llm = fakeLlm(() => Promise.reject(new Error('down')));
+    const out = await llmCoach(s, policy({ finisher: false }), llm, rng, 4000, { ctx });
+    expect(out).toEqual(ruleCoach(s, policy({ finisher: false }), rng, ctx));
+    expect(out.finisher).toBe(true);
+  });
+
+  test('prompt carries the duel summary, the current policy and only the last 5 lessons; timeout is passed on', async () => {
+    const llm = fakeLlm(async () => ({ lesson: 'ok', thresholdDelta: 0, finisher: true }));
+    const lessons = Array.from({ length: 8 }, (_, i) => lesson({ duelId: `d${i}`, text: `lesson-number-${i}` }));
+    await llmCoach(lost, policy({ skillHpThreshold: 42 }), llm, rng, 1234, { recentLessons: lessons });
+    const { system, user, timeoutMs } = llm.calls[0]!;
+    expect(timeoutMs).toBe(1234);
+    expect(system).toMatch(/JSON/);
+    expect(system).toContain(String(MAX_LESSON_CHARS));
+    expect(user).toMatch(/loss/i);
+    expect(user).toContain('42');
+    for (let i = 0; i < 5; i++) expect(user).toContain(`lesson-number-${i}`);
+    for (let i = 5; i < 8; i++) expect(user).not.toContain(`lesson-number-${i}`);
+  });
+
+  test('works without recentLessons and does not mutate its inputs', async () => {
+    const llm = fakeLlm(async () => ({ lesson: 'ok', thresholdDelta: 1, finisher: true }));
+    const s = deepFreeze(summary({ result: 'win', skillUsedAtHpPct: 30, hpTimeline: [{ block: 1, myHp: 10, oppHp: 5 }] }));
+    const p = deepFreeze(policy());
+    await expect(llmCoach(s, p, llm, rng)).resolves.toBeDefined();
   });
 });

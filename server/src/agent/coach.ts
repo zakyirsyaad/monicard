@@ -1,4 +1,6 @@
 import { skillDamage } from '@nad/shared';
+import { z } from 'zod';
+import { sanitizeText, withTimeout, type Llm } from '../llm';
 import type { DuelSummary } from '../sim/types';
 import type { AgentData, Lesson, Policy } from './policy';
 
@@ -80,6 +82,65 @@ export const ruleCoach = (s: DuelSummary, policy: Policy, rng: () => number, ctx
     finisher: canFinish ? true : policy.finisher,
   };
 };
+
+const DEFAULT_COACH_TIMEOUT_MS = 4000;
+const PROMPT_LESSONS = 5;
+const PROMPT_TIMELINE_POINTS = 12;
+
+const coachReply = z.object({ lesson: z.string(), thresholdDelta: z.number().int(), finisher: z.boolean() });
+
+const COACH_SYSTEM =
+  'You coach an AI agent that duels in Monicard, a tap-battle card game. Each duel the agent may fire one "Last stand" skill. ' +
+  'The policy fires it when its HP percentage drops to the threshold, and with "finisher" on it also fires when the skill would knock out the opponent. ' +
+  `Reply with JSON only: {"lesson": string, "thresholdDelta": integer from ${MIN_DELTA} to ${MAX_DELTA}, "finisher": boolean}. ` +
+  `"lesson" is one plain English sentence of at most ${MAX_LESSON_CHARS} characters, no emoji.`;
+
+const formatLesson = (l: Lesson): string => `- ${l.text} (threshold ${l.thresholdFrom}% -> ${l.thresholdTo}%)`;
+
+function coachPrompt(s: DuelSummary, policy: Policy, recentLessons: readonly Lesson[]): string {
+  const timeline = s.hpTimeline.slice(-PROMPT_TIMELINE_POINTS).map((p) => `${p.block}:${p.myHp}/${p.oppHp}`);
+  const lessons = recentLessons.slice(0, PROMPT_LESSONS).map(formatLesson);
+  return [
+    `Duel result: ${s.result}`,
+    `Skill used at HP: ${s.skillUsedAtHpPct === null ? 'never' : formatPct(s.skillUsedAtHpPct)}`,
+    `Elements: agent ${s.myElement}, opponent ${s.oppElement} (0 Fire, 1 Water, 2 Lightning)`,
+    `HP timeline (block:agentHp/opponentHp): ${timeline.join(' ') || 'none'}`,
+    `Current policy: threshold ${policy.skillHpThreshold}%, finisher ${policy.finisher ? 'on' : 'off'}`,
+    `Recent lessons (newest first):`,
+    ...(lessons.length > 0 ? lessons : ['- none']),
+  ].join('\n');
+}
+
+/** Validated LLM output with the lesson cleaned and the delta clamped, or null when unusable. */
+function cleanCoachReply(reply: z.infer<typeof coachReply>): CoachOutput | null {
+  const lesson = sanitizeText(reply.lesson);
+  if (lesson === '') return null;
+  return {
+    lesson: clampLesson(lesson),
+    thresholdDelta: clamp(reply.thresholdDelta, MIN_DELTA, MAX_DELTA),
+    finisher: reply.finisher,
+  };
+}
+
+/** LLM coach; any failure, timeout or invalid output falls back to `ruleCoach`. */
+export async function llmCoach(
+  s: DuelSummary,
+  policy: Policy,
+  llm: Llm,
+  rng: () => number,
+  timeoutMs = DEFAULT_COACH_TIMEOUT_MS,
+  opts?: { recentLessons?: Lesson[]; ctx?: CoachContext },
+): Promise<CoachOutput> {
+  try {
+    const prompt = coachPrompt(s, policy, opts?.recentLessons ?? []);
+    const reply = await withTimeout(llm.json(COACH_SYSTEM, prompt, coachReply, timeoutMs), timeoutMs);
+    const cleaned = cleanCoachReply(reply);
+    if (cleaned) return cleaned;
+  } catch {
+    // fall through to the rule coach
+  }
+  return ruleCoach(s, policy, rng, opts?.ctx);
+}
 
 /** Returns a new policy with the coach's nudge applied inside the allowed ranges. */
 export const applyCoach = (p: Policy, out: CoachOutput): Policy => {
