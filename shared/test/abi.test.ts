@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { blitzArenaAbi, nadCardsAbi } from '../src/abi';
-import { blitzArenaBytecode, nadCardsBytecode } from '../src/bytecode';
+import { blitzArenaAbi, nadCardsAbi, stakeVaultAbi } from '../src/abi';
+import { blitzArenaBytecode, nadCardsBytecode, stakeVaultBytecode } from '../src/bytecode';
 
 type AbiParam = { name: string; type: string; components?: readonly AbiParam[] };
 type AbiItem = {
@@ -74,6 +74,18 @@ describe('blitzArenaAbi', () => {
   });
 });
 
+describe('stakeVaultAbi', () => {
+  test('exposes stake, claim, the stakes lookup and the stake bound constants', () => {
+    expect(functionNames(stakeVaultAbi)).toEqual(
+      expect.arrayContaining(['stake', 'claim', 'stakes', 'MIN_STAKE', 'MAX_STAKE']),
+    );
+  });
+
+  test('emits Staked and Claimed', () => {
+    expect(eventNames(stakeVaultAbi)).toEqual(expect.arrayContaining(['Staked', 'Claimed']));
+  });
+});
+
 describe('bytecode', () => {
   test('nadCardsBytecode is a hex string longer than 100 chars', () => {
     expect(nadCardsBytecode.startsWith('0x')).toBe(true);
@@ -83,5 +95,10 @@ describe('bytecode', () => {
   test('blitzArenaBytecode is a hex string longer than 100 chars', () => {
     expect(blitzArenaBytecode.startsWith('0x')).toBe(true);
     expect(blitzArenaBytecode.length).toBeGreaterThan(100);
+  });
+
+  test('stakeVaultBytecode is a hex string longer than 100 chars', () => {
+    expect(stakeVaultBytecode.startsWith('0x')).toBe(true);
+    expect(stakeVaultBytecode.length).toBeGreaterThan(100);
   });
 });

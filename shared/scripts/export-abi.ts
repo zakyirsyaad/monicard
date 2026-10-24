@@ -25,16 +25,19 @@ function loadArtifact(name: string): Artifact {
 function main(): void {
   const nadCards = loadArtifact('NadCards');
   const blitzArena = loadArtifact('BlitzArena');
+  const stakeVault = loadArtifact('StakeVault');
 
   const abiSource =
     HEADER +
     `export const nadCardsAbi = ${JSON.stringify(nadCards.abi, null, 2)} as const;\n\n` +
-    `export const blitzArenaAbi = ${JSON.stringify(blitzArena.abi, null, 2)} as const;\n`;
+    `export const blitzArenaAbi = ${JSON.stringify(blitzArena.abi, null, 2)} as const;\n\n` +
+    `export const stakeVaultAbi = ${JSON.stringify(stakeVault.abi, null, 2)} as const;\n`;
 
   const bytecodeSource =
     HEADER +
     `export const nadCardsBytecode = '${nadCards.bytecode.object}' as const;\n\n` +
-    `export const blitzArenaBytecode = '${blitzArena.bytecode.object}' as const;\n`;
+    `export const blitzArenaBytecode = '${blitzArena.bytecode.object}' as const;\n\n` +
+    `export const stakeVaultBytecode = '${stakeVault.bytecode.object}' as const;\n`;
 
   writeFileSync(`${sharedSrc}abi.ts`, abiSource);
   writeFileSync(`${sharedSrc}bytecode.ts`, bytecodeSource);
