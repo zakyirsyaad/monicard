@@ -11,7 +11,8 @@ import { pullCard, startDuel } from '../lib/flows';
 import { formatMon, formatRecord } from '../lib/format';
 import { RARITIES, RARITY_ODDS } from '../lib/game';
 import { actionDeps, burnerAccount } from '../lib/player';
-import type { NadgachaCard } from '../lib/types';
+import type { Config } from '../lib/types';
+import { useCardMeta } from '../lib/useCardMeta';
 import { useConfig } from '../lib/useConfig';
 import { useTxGap } from '../lib/useTxGap';
 
@@ -23,83 +24,86 @@ const CREATING = 'Creating duel…';
 export function Play() {
   const navigate = useNavigate();
   const { config } = useConfig();
-  const [card, setCard] = useState<NadgachaCard | null>(null);
+  const [cardId, setCardId] = useState<string | null>(null);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const { reveal, error: cardError } = useCardMeta(cardId);
   const [busy, setBusy] = useState<Busy>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const { ready: gapOk, recheck } = useTxGap();
   // A duel we created whose challenge was refused: retries reuse it instead of creating another.
   const openDuel = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
-      const account = await api.getAccount(burnerAccount().address);
-      if (account.cardId === null) {
-        if (!cancelled) navigate('/', { replace: true });
-        return;
-      }
-      const meta = await api.getCard(account.cardId);
-      if (cancelled) return;
-      if (meta && 'nadgacha' in meta) setCard(meta.nadgacha);
-      else setError("We couldn't load your card. Reload to try again.");
-    };
-    load().catch((err: unknown) => {
-      if (!cancelled) setError(toFriendly(err, { fn: 'getAccount' }));
-    });
+    api.getAccount(burnerAccount().address).then(
+      (account) => {
+        if (cancelled) return;
+        if (account.cardId === null) navigate('/', { replace: true });
+        else setCardId(account.cardId);
+      },
+      (err: unknown) => {
+        if (!cancelled) setAccountError(toFriendly(err, { fn: 'getAccount' }));
+      },
+    );
     return () => {
       cancelled = true;
     };
   }, [navigate]);
 
+  const card = reveal?.card ?? null;
+  const error = actionError ?? accountError ?? cardError;
+
   const run = async (kind: Exclude<Busy, null>, fn: string, action: () => Promise<void>) => {
     if (busy) return;
     setBusy(kind);
-    setError(null);
+    setActionError(null);
     try {
       await action();
     } catch (err) {
-      setError(toFriendly(err, { fn }));
+      setActionError(toFriendly(err, { fn }));
       setBusy(null);
     } finally {
       recheck();
     }
   };
 
-  const duelId = async (cardId: string): Promise<string> => {
-    if (!config) throw new Error('Config not loaded');
-    openDuel.current ??= await startDuel(actionDeps(config), cardId);
+  const duelId = async (cfg: Config, id: string): Promise<string> => {
+    openDuel.current ??= await startDuel(actionDeps(cfg), id);
     return openDuel.current;
   };
 
-  const fightAgent = () =>
-    run('agent', 'createDuel', async () => {
-      if (!card) return;
-      const id = await duelId(String(card.id));
+  const fightAgent = () => {
+    if (cardId === null || !config) return Promise.resolve();
+    return run('agent', 'createDuel', async () => {
+      const id = await duelId(config, cardId);
       const res = await api.challengeAgent(id);
       if (res.ok) {
         navigate(`/duel/${id}`);
         return;
       }
       if (res.reason === 'not_open' || res.reason === 'stale') openDuel.current = null;
-      setError(friendlyError({ kind: 'agent', reason: res.reason }));
+      setActionError(friendlyError({ kind: 'agent', reason: res.reason }));
       setBusy(null);
     });
+  };
 
-  const challengeFriend = () =>
-    run('friend', 'createDuel', async () => {
-      if (!card) return;
-      navigate(`/duel/${await duelId(String(card.id))}`);
+  const challengeFriend = () => {
+    if (cardId === null || !config) return Promise.resolve();
+    return run('friend', 'createDuel', async () => {
+      navigate(`/duel/${await duelId(config, cardId)}`);
     });
+  };
 
-  const pullAgain = () =>
-    run('pull', 'paidPull', async () => {
-      if (!config) return;
+  const pullAgain = () => {
+    if (!config) return Promise.resolve();
+    return run('pull', 'paidPull', async () => {
       const tokenId = await pullCard(actionDeps(config), { paid: true });
       navigate(`/pull?card=${encodeURIComponent(tokenId)}`);
     });
+  };
 
   const price = config ? formatMon(config.pullPrice) : '0.05';
-  const ready = card !== null && config !== null;
+  const ready = cardId !== null && config !== null;
   const pullDisabled = !ready || !gapOk;
 
   return (
@@ -122,6 +126,7 @@ export function Play() {
       ) : (
         <div className="mx-auto aspect-[300/560] w-[200px] rounded-card bg-surface-sunken" />
       )}
+      {reveal && reveal.status !== 'ready' && <p className="body text-center text-ink-muted">Forging lore…</p>}
       <div className="mt-auto flex flex-col gap-3">
         {error && <Notice>{error}</Notice>}
         <Button busy={busy === 'agent'} busyLabel={CREATING} disabled={!ready || busy !== null} onClick={() => void fightAgent()}>

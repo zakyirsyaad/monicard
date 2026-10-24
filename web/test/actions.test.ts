@@ -7,6 +7,7 @@ import {
   FUND_SETTLE_MS,
   FundError,
   MIN_FUND_WEI,
+  MaybeLandedError,
   RevertedError,
   TX_GAP_MS,
   createDuel,
@@ -180,6 +181,31 @@ describe('sendCall', () => {
     expect(relay).toHaveBeenCalledTimes(2);
     expect(parseTransaction(relay.mock.calls[0]?.[0] as Hex).nonce).toBe(3);
     expect(parseTransaction(relay.mock.calls[1]?.[0] as Hex).nonce).toBe(4);
+  });
+
+  it('does not re-sign after a timeout when the nonce has moved: the first send probably landed', async () => {
+    const getAccount = vi
+      .fn<Api['getAccount']>()
+      .mockResolvedValueOnce(acct(MIN_FUND_WEI, 5))
+      .mockResolvedValueOnce(acct(MIN_FUND_WEI, 6));
+    const relay = vi
+      .fn<Api['relay']>()
+      .mockRejectedValueOnce(new TimeoutError(5000))
+      .mockRejectedValueOnce(new ApiError(400, 'nonce_too_low'));
+    const err = await sendCall(deps(makeApi({ getAccount, relay })), call).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MaybeLandedError);
+    expect(relay).toHaveBeenCalledTimes(2);
+    expect(relay.mock.calls[1]?.[0]).toBe(relay.mock.calls[0]?.[0]);
+  });
+
+  it('rethrows the nonce error after a timeout when the chain nonce has not moved', async () => {
+    const getAccount = vi.fn<Api['getAccount']>().mockResolvedValue(acct(MIN_FUND_WEI, 5));
+    const relay = vi
+      .fn<Api['relay']>()
+      .mockRejectedValueOnce(new TimeoutError(5000))
+      .mockRejectedValueOnce(new ApiError(400, 'nonce_too_low'));
+    await expect(sendCall(deps(makeApi({ getAccount, relay })), call)).rejects.toBeInstanceOf(ApiError);
+    expect(relay).toHaveBeenCalledTimes(2);
   });
 
   it('does not retry a second nonce error', async () => {

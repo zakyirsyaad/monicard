@@ -1,4 +1,4 @@
-import { FundError } from './actions';
+import { FundError, MaybeLandedError } from './actions';
 import { ApiError, NetworkError, TimeoutError } from './api';
 import { InsufficientFundsError } from './flows';
 import type { DuelStatus } from './types';
@@ -9,6 +9,7 @@ export type FriendlyInput =
   | { kind: 'reverted'; fn: string; duelStatus?: DuelStatus }
   | { kind: 'relay'; reason: string }
   | { kind: 'network' }
+  | { kind: 'uncertain' }
   | { kind: 'agent'; reason: AgentRefusalReason };
 
 export type ErrorContext = { fn: string; duelStatus?: DuelStatus };
@@ -56,6 +57,8 @@ export function friendlyError(e: FriendlyInput): string {
       return relayMessage(e.reason);
     case 'network':
       return 'Network is busy. Trying again.';
+    case 'uncertain':
+      return 'That may have gone through. Check your card and try again.';
     case 'agent':
       return agentMessage(e.reason);
   }
@@ -78,8 +81,9 @@ export function toFriendly(err: unknown, ctx: ErrorContext): string {
     return friendlyError({ kind: 'reverted', fn, duelStatus: ctx.duelStatus });
   }
   if (err instanceof FundError) return fundMessage(err);
+  if (err instanceof MaybeLandedError) return friendlyError({ kind: 'uncertain' });
   if (err instanceof InsufficientFundsError) return 'Not enough test MON for another pull.';
   if (err instanceof NetworkError || err instanceof TimeoutError) return friendlyError({ kind: 'network' });
   if (err instanceof ApiError) return friendlyError({ kind: 'relay', reason: err.reason });
-  return friendlyError({ kind: 'relay', reason: 'unknown' });
+  return GENERIC_REVERT;
 }

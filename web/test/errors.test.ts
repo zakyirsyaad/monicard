@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError, NetworkError, TimeoutError } from '../src/lib/api';
-import { FundError, RevertedError } from '../src/lib/actions';
+import { FundError, MaybeLandedError, RevertedError } from '../src/lib/actions';
 import { friendlyError, toFriendly } from '../src/lib/errors';
 import { InsufficientFundsError } from '../src/lib/flows';
 
@@ -90,8 +90,14 @@ describe('toFriendly', () => {
   });
 
   it('falls back to a calm generic message for unknown errors', () => {
-    expect(toFriendly(new Error('boom'), ctx)).toBe('The network rejected that. Try again.');
-    expect(toFriendly('weird', ctx)).toBe('The network rejected that. Try again.');
+    expect(toFriendly(new Error('boom'), ctx)).toBe("That didn't go through. Try again.");
+    expect(toFriendly('weird', ctx)).toBe("That didn't go through. Try again.");
+  });
+
+  it('warns when a tx may have gone through', () => {
+    const text = 'That may have gone through. Check your card and try again.';
+    expect(friendlyError({ kind: 'uncertain' })).toBe(text);
+    expect(toFriendly(new MaybeLandedError('paidPull'), ctx)).toBe(text);
   });
 
   it('maps funding refusals', () => {

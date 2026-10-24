@@ -1,85 +1,27 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { CardImage } from '../components/CardImage';
 import { Notice } from '../components/Notice';
 import { Screen } from '../components/Screen';
-import { api } from '../lib/api';
 import { CARD_IMAGE_SRC } from '../lib/cardImage';
-import { toFriendly } from '../lib/errors';
 import { formatBlock } from '../lib/format';
 import { ELEMENT_NAMES, RARITY_NAMES, elementTextClass, rarityBorderClass } from '../lib/labels';
 import { prefersReducedMotion } from '../lib/motion';
 import { takeReturnTo } from '../lib/returnTo';
-import type { CardMeta, NadgachaCard } from '../lib/types';
+import { useCardMeta } from '../lib/useCardMeta';
 
 const CLOSED_MS = 600;
 const FRAME_MS = 400;
-const POLL_MS = 1000;
-const LOOKUP_RETRIES = 4;
-const LOOKUP_RETRY_MS = 700;
 
 type Phase = 'closed' | 'frame' | 'open';
-type Reveal = { status: 'ready' | 'forging'; card: NadgachaCard | null };
-
-function revealOf(meta: CardMeta): Reveal {
-  if ('nadgacha' in meta) return { status: meta.nadgacha.status, card: meta.nadgacha };
-  return { status: 'forging', card: null };
-}
-
-const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-/** The server may need a moment to know a freshly minted token. */
-async function lookupCard(id: string, isCancelled: () => boolean): Promise<CardMeta | null> {
-  for (let attempt = 0; attempt < LOOKUP_RETRIES; attempt++) {
-    const meta = await api.getCard(id);
-    if (meta || isCancelled()) return meta;
-    await wait(LOOKUP_RETRY_MS);
-  }
-  return null;
-}
 
 export function Pull() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const id = params.get('card');
-  const [reveal, setReveal] = useState<Reveal | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { reveal, error } = useCardMeta(id);
   const [phase, setPhase] = useState<Phase>(() => (prefersReducedMotion() ? 'open' : 'closed'));
-  const forging = useRef(false);
-  forging.current = reveal?.status === 'forging';
-
-  useEffect(() => {
-    if (!id) return undefined;
-    let cancelled = false;
-    lookupCard(id, () => cancelled).then(
-      (meta) => {
-        if (cancelled) return;
-        if (meta) setReveal(revealOf(meta));
-        else setError("We couldn't find that card. Go back and try again.");
-      },
-      (err: unknown) => {
-        if (!cancelled) setError(toFriendly(err, { fn: 'getCard' }));
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [id]);
-
-  useEffect(() => {
-    if (!id) return undefined;
-    const timer = setInterval(() => {
-      if (!forging.current) return;
-      api.getCard(id).then(
-        (meta) => {
-          if (meta) setReveal(revealOf(meta));
-        },
-        () => undefined, // Polling: the next tick tries again.
-      );
-    }, POLL_MS);
-    return () => clearInterval(timer);
-  }, [id]);
 
   useEffect(() => {
     if (phase === 'open') return undefined;
@@ -130,7 +72,7 @@ export function Pull() {
       <div className="mt-auto flex flex-col gap-3">
         {error && <Notice>{error}</Notice>}
         {!id && <Notice>No card to show. Go back and pull one.</Notice>}
-        <Button disabled={!revealed && !error && Boolean(id)} onClick={next}>
+        <Button disabled={Boolean(id) && !error && !(revealed && card)} onClick={next}>
           Continue
         </Button>
       </div>

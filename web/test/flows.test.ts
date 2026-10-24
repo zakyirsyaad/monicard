@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseTransaction } from 'viem';
 import type { Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
@@ -47,6 +47,10 @@ function deps(over: Partial<Api> = {}) {
   return { api, account, config, sleep: vi.fn(() => Promise.resolve()) };
 }
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe('pullCard', () => {
   it('free pull returns the minted token id', async () => {
     const d = deps();
@@ -65,6 +69,39 @@ describe('pullCard', () => {
     const d = deps({ getAccount: vi.fn(() => Promise.resolve(acct(PRICE + MIN_FUND_WEI - 1n))) });
     await expect(pullCard(d, { paid: true })).rejects.toBeInstanceOf(InsufficientFundsError);
     expect(d.api.relay).not.toHaveBeenCalled();
+  });
+
+  it('waits out the 3-block gap before a paid pull', async () => {
+    vi.stubGlobal('localStorage', { getItem: () => '9000', setItem: () => undefined });
+    const d = { ...deps(), now: () => 9400 };
+    await pullCard(d, { paid: true });
+    expect(d.sleep).toHaveBeenCalledWith(1100);
+  });
+
+  it('does not wait when the last tx is old enough', async () => {
+    vi.stubGlobal('localStorage', { getItem: () => '1000', setItem: () => undefined });
+    const d = { ...deps(), now: () => 9400 };
+    await pullCard(d, { paid: true });
+    expect(d.sleep).not.toHaveBeenCalled();
+  });
+
+  it.each(['limit_address', 'limit_ip', 'budget'] as const)(
+    'reports a short balance when a paid pull is refused funding (%s)',
+    async (reason) => {
+      const d = deps({
+        getAccount: vi.fn(() => Promise.resolve(acct(PRICE))),
+        fund: vi.fn(() => Promise.resolve({ funded: false, reason })),
+      });
+      await expect(pullCard(d, { paid: true })).rejects.toBeInstanceOf(InsufficientFundsError);
+    },
+  );
+
+  it('keeps FundError(disabled) for a paid pull', async () => {
+    const d = deps({
+      getAccount: vi.fn(() => Promise.resolve(acct(PRICE))),
+      fund: vi.fn(() => Promise.resolve({ funded: false, reason: 'disabled' as const })),
+    });
+    await expect(pullCard(d, { paid: true })).rejects.toBeInstanceOf(FundError);
   });
 
   it('throws RevertedError for a reverted free pull', async () => {

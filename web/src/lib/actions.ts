@@ -17,7 +17,7 @@ export const LAST_TX_KEY = 'nad.lastTxAt';
 const MAX_RESENDS = 3;
 const NONCE_ERROR = /nonce/i;
 
-const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+export const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class FundError extends Error {
   constructor(readonly reason: Exclude<FundReason, 'balance_ok'>) {
@@ -32,6 +32,14 @@ export class RevertedError extends Error {
   constructor(readonly fn: string) {
     super(`${fn} reverted`);
     this.name = 'RevertedError';
+  }
+}
+
+/** A relay timed out and the nonce has since moved: the first send most likely landed. Never re-sign. */
+export class MaybeLandedError extends Error {
+  constructor(readonly fn: string) {
+    super(`${fn} may have landed`);
+    this.name = 'MaybeLandedError';
   }
 }
 
@@ -96,33 +104,70 @@ export async function ensureFunds(
 
 export type CallParams = { fn: string; to: Hex; data: Hex; gas: number; value?: bigint };
 
+type Relayed = { result: RelayResult; timedOut: boolean };
+
+/** A relay that failed after at least one timeout (the identical raw tx was resent). */
+class RelayFailure extends Error {
+  constructor(
+    readonly cause: unknown,
+    readonly timedOut: boolean,
+  ) {
+    super('Relay failed');
+  }
+}
+
 /** Relays `raw`, resending the byte-identical tx on timeouts. */
-async function relayWithResends(deps: ActionDeps, raw: Hex): Promise<RelayResult> {
+async function relayWithResends(deps: ActionDeps, raw: Hex): Promise<Relayed> {
   const now = deps.now ?? Date.now;
+  let timedOut = false;
   for (let attempt = 0; ; attempt++) {
     try {
-      return await deps.api.relay(raw);
+      return { result: await deps.api.relay(raw), timedOut };
     } catch (err) {
-      if (!(err instanceof TimeoutError) || attempt >= MAX_RESENDS) throw err;
+      if (!(err instanceof TimeoutError)) throw new RelayFailure(err, timedOut);
+      timedOut = true;
+      if (attempt >= MAX_RESENDS) throw new RelayFailure(err, timedOut);
     } finally {
       recordTx(now());
     }
   }
 }
 
-/** Signs a call with the burner and relays it. Fresh nonce each call; one re-sign on a nonce error. */
+/**
+ * Signs a call with the burner and relays it. A nonce error re-signs once, but only if no send of this call
+ * ever timed out: after a timeout the first send probably landed, and re-signing would duplicate a value tx.
+ */
 export async function sendCall(deps: ActionDeps, call: CallParams): Promise<RelayResult> {
   const { api, account, config } = deps;
-  const sign = async (): Promise<Hex> => {
+  const sign = async (): Promise<{ raw: Hex; nonce: number }> => {
     const { nonce } = await api.getAccount(account.address);
-    return signCall(account, config, { to: call.to, data: call.data, gas: call.gas, value: call.value, nonce });
+    const raw = await signCall(account, config, {
+      to: call.to,
+      data: call.data,
+      gas: call.gas,
+      value: call.value,
+      nonce,
+    });
+    return { raw, nonce };
   };
 
+  const first = await sign();
   try {
-    return await relayWithResends(deps, await sign());
-  } catch (err) {
+    return (await relayWithResends(deps, first.raw)).result;
+  } catch (failure) {
+    if (!(failure instanceof RelayFailure)) throw failure;
+    const err = failure.cause;
     if (!(err instanceof ApiError) || !NONCE_ERROR.test(err.reason)) throw err;
-    return relayWithResends(deps, await sign());
+    if (failure.timedOut) {
+      const { nonce } = await api.getAccount(account.address);
+      if (nonce > first.nonce) throw new MaybeLandedError(call.fn);
+      throw err;
+    }
+    try {
+      return (await relayWithResends(deps, (await sign()).raw)).result;
+    } catch (second) {
+      throw second instanceof RelayFailure ? second.cause : second;
+    }
   }
 }
 
