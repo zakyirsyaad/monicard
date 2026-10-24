@@ -41,6 +41,14 @@ export class NetworkError extends Error {
 
 export const RELAY_TIMEOUT_MS = 5000;
 
+const TRANSIENT_STATUSES: ReadonlySet<number> = new Set([429, 500, 502, 503, 504]);
+
+/** Worth retrying: the server was briefly unavailable or the request never completed. */
+export function isTransient(err: unknown): boolean {
+  if (err instanceof NetworkError || err instanceof TimeoutError) return true;
+  return err instanceof ApiError && TRANSIENT_STATUSES.has(err.status);
+}
+
 type AgentRefusal = Extract<AgentChallengeResult, { ok: false }>['reason'];
 
 const AGENT_REFUSAL_STATUSES = new Set([409, 429]);
