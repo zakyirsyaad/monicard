@@ -1,0 +1,777 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Monicard Card Battle Ad</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Schibsted+Grotesk:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script>
+// Frame-driven ad: render(t) draws one deterministic frame at time t (seconds).
+// Scenes are laid out on a 1080 x 1920 stage. In landscape (?w=1920&h=1080) the stage is
+// cropped per scene and placed on the right, while headlines move to a left column.
+const W = 1080, H = 1920, FPS = 60, DURATION = 32;
+const QS = new URLSearchParams(location.search);
+const CW = Number(QS.get('w') || W), CH = Number(QS.get('h') || H), LAND = CW > CH;
+const cv = document.getElementById('c');
+cv.width = CW; cv.height = CH;
+const ctx = cv.getContext('2d');
+
+// Beat grid measured from battle_music.mp3 (127.6 BPM, first beat 0.110 s).
+const BPM = 127.6, OFFSET = 0.110, BEAT = 60 / BPM;
+const B = k => OFFSET + k * BEAT;
+const SCENE = { hook: 0, draw: 8, place: 20, attack: 32, agent: 48, swarm: 56, close: 62 };
+
+const T = { surface:'#fbfaf9', raised:'#ffffff', sunken:'#efeef2', line:'#e3e0ea', ink:'#0e100f', muted:'#5c5a66', purple:'#6e54ff', onPurple:'#ffffff', purpleInk:'#5235f0', purpleTint:'#f1efff', deep:'#200052', onDeep:'#fbfaf9', berry:'#a0055d', berryTint:'#fbe8f2', fire:'#b8400b', water:'#0b64be', lightning:'#7a5c00', common:'#84808e', rare:'#0e7c66', epic:'#200052', legendary:'#a8741a' };
+// Text on the deep background uses the dark-theme tints.
+const D = { ink:'#fbfaf9', muted:'#a9a6b4', line:'rgba(228,223,255,.28)', lavender:'#e4dfff', purpleInk:'#b9adff', berry:'#ff7ab8' };
+const SANS = '"Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif';
+const MONO = '"JetBrains Mono", Menlo, monospace';
+const GUTTER = 66;
+
+// ---------- math ----------
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, x) => a + (b - a) * x;
+const outExpo = x => x >= 1 ? 1 : 1 - Math.pow(2, -10 * x);
+const inExpo = x => x <= 0 ? 0 : Math.pow(2, 10 * x - 10);
+const inOutExpo = x => x <= 0 ? 0 : x >= 1 ? 1 : x < .5 ? Math.pow(2, 20 * x - 10) / 2 : (2 - Math.pow(2, -20 * x + 10)) / 2;
+const outCubic = x => 1 - Math.pow(1 - x, 3);
+const inCubic = x => x * x * x;
+const inOutCubic = x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const outBack = (x, s = 1.2) => 1 + (s + 1) * Math.pow(x - 1, 3) + s * Math.pow(x - 1, 2);
+function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+const fmt = n => Math.round(n).toLocaleString('en-US');
+function hashHex(seed, n = 64) { const r = rng(seed); let s = ''; for (let i = 0; i < n; i++) s += '0123456789abcdef'[Math.floor(r() * 16)]; return s; }
+const shortHash = seed => { const h = hashHex(seed); return `0x${h.slice(0, 4)}…${h.slice(-4)}`; };
+
+// ---------- drawing ----------
+function font(size, weight = 600, mono = false) { ctx.font = `${weight} ${size}px ${mono ? MONO : SANS}`; }
+function text(str, x, y, o = {}) {
+  ctx.save();
+  font(o.size || 24, o.weight || 600, o.mono);
+  ctx.letterSpacing = (o.ls || 0) + 'px';
+  ctx.fillStyle = o.color || T.ink;
+  ctx.textAlign = o.align || 'left';
+  ctx.textBaseline = o.base || 'alphabetic';
+  ctx.globalAlpha *= o.alpha ?? 1;
+  ctx.fillText(str, x, y);
+  ctx.restore();
+}
+function measure(str, size, weight, mono, ls = 0) { ctx.save(); font(size, weight, mono); ctx.letterSpacing = ls + 'px'; const w = ctx.measureText(str).width; ctx.restore(); return w; }
+function rrect(x, y, w, h, r, fill, stroke, lw = 2, dash) {
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, Math.max(0, Math.min(r, w / 2, h / 2)));
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.save(); ctx.strokeStyle = stroke; ctx.lineWidth = lw; if (dash) ctx.setLineDash(dash); ctx.stroke(); ctx.restore(); }
+}
+function line(x1, y1, x2, y2, color, lw = 2) { ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.stroke(); }
+function chip(str, x, y, o) {
+  const size = o.size || 22, padX = size * .7, h = size * 1.75, ls = o.ls ?? (o.mono ? 0 : size * .06);
+  const w = measure(str, size, o.weight || 600, o.mono, ls) + padX * 2;
+  const x0 = o.align === 'right' ? x - w : o.align === 'center' ? x - w / 2 : x;
+  rrect(x0, y, w, h, o.r ?? 8, o.bg, o.border, o.lw || 2);
+  text(str, x0 + padX, y + h / 2 + 1, { size, weight: o.weight || 600, mono: o.mono, color: o.color, base: 'middle', ls });
+  return w;
+}
+function bg(c) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = c; ctx.fillRect(0, 0, CW, CH); ctx.restore(); }
+// Landscape draws headlines and the top bar after the stage, in canvas space.
+let overlay = [];
+// Letters rise from below a clip line with stagger; exit lifts them out.
+function kinetic(str, x, y, o) {
+  const size = o.size, ls = o.ls ?? -size * .025, weight = o.weight || 800;
+  const total = measure(str, size, weight, false, ls);
+  let cx = o.align === 'center' ? x - total / 2 : x;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(-W, y - size * 1.05, W * 3, size * 1.35); ctx.clip();
+  for (let i = 0; i < str.length; i++) {
+    const p = o.p(i), e = o.exit ? o.exit(i) : 0;
+    text(str[i], cx, y + (1 - p) * size * 1.1 - e * size * 1.4, { size, weight, color: o.color, ls });
+    cx += measure(str[i], size, weight, false, ls);
+  }
+  ctx.restore();
+}
+// A centered multi-line headline that enters at k0 and exits at k1 (beats).
+function headline(t, lines, k0, k1, o = {}) {
+  if (LAND) { overlay.push(() => headlineLeft(t, lines, k0, k1, o)); return; }
+  const size = o.size || 92, y0 = o.y || 300, lh = size * 1.08;
+  lines.forEach((ln, li) => kinetic(ln, W / 2, y0 + li * lh, {
+    size, align: 'center', color: o.color || T.ink,
+    p: j => outExpo(prog(t, B(k0) + li * .09 + j * .016, B(k0) + .5 + li * .09 + j * .016)),
+    exit: k1 == null ? null : j => inExpo(prog(t, B(k1) - .32 + li * .04 + j * .006, B(k1) - .06 + li * .04 + j * .006)),
+  }));
+}
+function headlineLeft(t, lines, k0, k1, o) {
+  const size = 104, lh = size * 1.08, total = o.total || lines.length, row = o.row || 0;
+  const y0 = CH / 2 - total * lh / 2 + size * .82;
+  lines.forEach((ln, li) => kinetic(ln, 120, y0 + (row + li) * lh, {
+    size, color: o.color || T.ink,
+    p: j => outExpo(prog(t, B(k0) + li * .09 + j * .016, B(k0) + .5 + li * .09 + j * .016)),
+    exit: k1 == null ? null : j => inExpo(prog(t, B(k1) - .32 + li * .04 + j * .006, B(k1) - .06 + li * .04 + j * .006)),
+  }));
+}
+// Digits roll vertically when the value changes.
+function rolling(str, prev, p, x, y, size, color, align = 'left') {
+  const w = measure(str, size, 600, true);
+  let cx = align === 'right' ? x - w : x;
+  ctx.save(); ctx.beginPath(); ctx.rect(cx - 4, y - size * 1.0, w + 8, size * 1.3); ctx.clip();
+  for (let i = 0; i < str.length; i++) {
+    const cw = measure(str[i], size, 600, true);
+    if (prev && str[i] !== prev[i]) {
+      text(prev[i] || '', cx, y - p * size * 1.2, { size, weight: 600, mono: true, color });
+      text(str[i], cx, y + (1 - p) * size * 1.2, { size, weight: 600, mono: true, color });
+    } else text(str[i], cx, y, { size, weight: 600, mono: true, color });
+    cx += cw;
+  }
+  ctx.restore();
+}
+
+// ---------- assets ----------
+const NADMON = window.NADMON_SVGS || {};
+const IMG = {};
+function loadImages() {
+  return Promise.all(Object.entries(NADMON).map(([id, svg]) => new Promise(res => {
+    const im = new Image(); im.onload = () => res(); im.onerror = () => res();
+    im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); IMG[id] = im;
+  })));
+}
+
+// ---------- match data (damage = atk x 35 x elementMult / 100, as in CardBattle) ----------
+const EL = { Fire: 'fire', Water: 'water', Lightning: 'lightning' };
+const RAR = ['Common', 'Rare', 'Epic', 'Legendary'];
+const CARDS = {
+  abyssnad: { id: 'abyssnad', name: 'Abyssnad', el: 'Water', rarity: 3, stage: 3, atk: 17, hp: 2040 },
+  dripnad: { id: 'dripnad', name: 'Dripnad', el: 'Water', rarity: 1, stage: 1, atk: 12, hp: 1720 },
+  sparkit: { id: 'sparkit', name: 'Sparkit', el: 'Lightning', rarity: 0, stage: 1, atk: 11, hp: 1610 },
+  embrit: { id: 'embrit', name: 'Embrit', el: 'Fire', rarity: 1, stage: 1, atk: 12, hp: 1690 },
+  voltnad: { id: 'voltnad', name: 'Voltnad', el: 'Lightning', rarity: 2, stage: 2, atk: 13, hp: 1870 },
+  blazenad: { id: 'blazenad', name: 'Blazenad', el: 'Fire', rarity: 2, stage: 2, atk: 14, hp: 1880 },
+  wavenad: { id: 'wavenad', name: 'Wavenad', el: 'Water', rarity: 2, stage: 2, atk: 15, hp: 1900 },
+};
+const BLOCK0 = 73741208;
+const blockAt = t => BLOCK0 + Math.floor(t / .3);
+
+// ---------- SFX timeline (seconds), read by mix.py ----------
+const ATTACK_HIT = B(36.5), KO_AT = B(38), SCORE_AT = B(38.75);
+window.SFX = [
+  { file: 'whoosh', t: B(0), gain: .5 },
+  ...Array.from({ length: 5 }, (_, i) => ({ file: 'card_place', t: B(1) + .1 + i * .12, gain: .35 })),
+  { file: 'pop', t: B(2), gain: .4 }, { file: 'pop', t: B(4), gain: .4 },
+  { file: 'whoosh', t: B(7.6), gain: .6 },
+  { file: 'card_draw', t: B(9), gain: .9 },
+  { file: 'riser', t: B(10) - 1.6 + .5, gain: .45 },
+  { file: 'shimmer', t: B(10), gain: .85 }, { file: 'impact', t: B(10), gain: .55 },
+  { file: 'pop', t: B(10.75), gain: .6 },
+  { file: 'pop', t: B(11.5), gain: .35 }, { file: 'pop', t: B(12), gain: .35 },
+  { file: 'card_draw', t: B(16.5), gain: .7 },
+  { file: 'whoosh', t: B(19.6), gain: .6 },
+  { file: 'click', t: B(23), gain: .8 }, { file: 'pop', t: B(23.6), gain: .45 },
+  { file: 'card_draw', t: B(24.5), gain: .6 }, { file: 'card_place', t: B(25.5), gain: 1 },
+  { file: 'pop', t: B(27), gain: .4 }, { file: 'click', t: B(28.5), gain: .5 },
+  { file: 'whoosh', t: B(31.6), gain: .65 },
+  { file: 'glitch', t: B(33), gain: .45 }, { file: 'impact', t: B(33.75), gain: .45 },
+  { file: 'glitch', t: B(35), gain: .45 },
+  { file: 'riser', t: ATTACK_HIT - 1.6, gain: .55 },
+  { file: 'click', t: B(36), gain: .8 },
+  { file: 'impact', t: ATTACK_HIT, gain: 1 },
+  { file: 'glitch', t: B(37), gain: .55 },
+  { file: 'impact', t: KO_AT, gain: .7 },
+  { file: 'score', t: SCORE_AT, gain: .9 },
+  { file: 'victory', t: B(40), gain: .85 },
+  { file: 'pop', t: B(42), gain: .45 },
+  { file: 'whoosh', t: B(47.6), gain: .65 },
+  ...[49, 50, 51].map(k => ({ file: 'pop', t: B(k), gain: .5 })),
+  ...[50, 52, 54].map(k => ({ file: 'card_draw', t: B(k), gain: .35 })),
+  { file: 'whoosh', t: B(55.6), gain: .65 },
+  ...Array.from({ length: 10 }, (_, i) => ({ file: 'glitch', t: B(57) + i * .22, gain: .15 })),
+  { file: 'whoosh', t: B(61.6), gain: .65 },
+  { file: 'logo', t: B(62), gain: 1 },
+];
+
+// ---------- chrome ----------
+function topBar(t, dark) {
+  if (LAND) { overlay.push(() => topBarAt(t, dark, CW, 112)); return; }
+  topBarAt(t, dark, W, 128);
+}
+function topBarAt(t, dark, width, y) {
+  const c = dark ? D.muted : T.muted, ink = dark ? D.ink : T.ink, W = width, dy = y - 128;
+  ctx.save(); ctx.translate(0, dy);
+  text('MONICARD', GUTTER, 128, { size: 24, color: ink, ls: 24 * .14 });
+  text('BLOCK', W - GUTTER, 104, { size: 16, color: c, ls: 16 * .12, align: 'right' });
+  const p = outExpo(clamp((t % .3) / .12));
+  rolling('#' + fmt(blockAt(t)), '#' + fmt(blockAt(t) - 1), p, W - GUTTER, 146, 30, ink, 'right');
+  ctx.restore();
+}
+
+// ---------- cards ----------
+function cardBack(x, y, s) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  rrect(0, 0, 300, 560, 14, T.deep);
+  for (let i = 1; i <= 6; i++) rrect(10 * i, 10 * i, 300 - 20 * i, 560 - 20 * i, Math.max(2, 14 - i * 2), null, `rgba(251,250,249,${.28 - i * .03})`, 1);
+  text('Monicard', 150, 286, { size: 34, weight: 800, color: T.onDeep, align: 'center', base: 'middle', ls: -.6 });
+  text('CARD BATTLE', 150, 318, { size: 10, weight: 600, color: 'rgba(251,250,249,.7)', align: 'center', ls: 1.2 });
+  ctx.restore();
+}
+// Foil: the one gradient the system allows, Legendary only.
+function foil(x, y, w, h, t, a) {
+  ctx.save(); ctx.globalAlpha = a; ctx.globalCompositeOperation = 'screen';
+  const off = (t / 6 % 1) * 120;
+  const g = ctx.createLinearGradient(x - 60 + off, y, x + 60 + off, y + 120);
+  ['#ffffff00', '#ffe9a855', '#ffffff00', '#b9adff44', '#ffffff00'].forEach((c, i) => g.addColorStop(i / 4, c));
+  ctx.fillStyle = g;
+  for (let i = -6; i < 10; i++) { ctx.save(); ctx.translate(i * 60, 0); ctx.fillRect(x - 60, y, 120, h); ctx.restore(); }
+  ctx.restore();
+}
+function sweep(x, y, w, h, p) {
+  if (p <= 0 || p >= 1) return;
+  ctx.save(); ctx.globalCompositeOperation = 'screen';
+  const cx = lerp(x - w * .6, x + w * 1.6, p);
+  const g = ctx.createLinearGradient(cx - 140, y, cx + 140, y + 200);
+  g.addColorStop(0, '#ffffff00'); g.addColorStop(.5, '#fff1c8cc'); g.addColorStop(1, '#ffffff00');
+  ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
+  ctx.restore();
+}
+const rarityColor = c => T[RAR[c.rarity].toLowerCase()];
+// Full battle card face in 300 x 560 units: drawn card, its stats and damage.
+function cardFront(x, y, s, c, o) {
+  const elc = T[EL[c.el]];
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  rrect(1.5, 1.5, 297, 557, 14, T.raised, rarityColor(c), 3);
+  text(`STAGE ${c.stage}`, 16, 26, { size: 10, color: T.muted, ls: .6 });
+  text(c.name, 16, 52, { size: 24, weight: 800, ls: -.3 });
+  text('HP ' + fmt(o.hp ?? c.hp), 284, 52, { size: 13, weight: 600, mono: true, align: 'right' });
+  const cw = chip(c.el.toUpperCase(), 16, 62, { size: 10, bg: T.surface, border: elc, color: elc, r: 4, lw: 1 });
+  chip(RAR[c.rarity].toUpperCase(), 22 + cw, 62, { size: 10, bg: T.purpleTint, color: T.purpleInk, r: 4 });
+  ctx.save(); ctx.beginPath(); ctx.roundRect(12, 88, 276, 172, 8); ctx.clip();
+  if (IMG[c.id]) ctx.drawImage(IMG[c.id], 12, 88, 276, 172);
+  if (c.rarity === 3) foil(12, 88, 276, 172, o.t, 1);
+  ctx.restore();
+  rrect(12, 88, 276, 172, 8, null, elc, 2);
+  text(`Drawn onchain · Block #${fmt(BLOCK0 + 31)}`, 150, 278, { size: 10, weight: 400, color: T.muted, align: 'center' });
+  [['Attack', String(Math.round(c.atk * 35 * (o.reveal ?? 1))), 'ATK 17 × 35. Hits the front card.', 290],
+   ['vs Fire', String(Math.floor(c.atk * 35 * 1.5 * (o.reveal ?? 1))), 'Super effective ×1.5.', 336]].forEach(([n, v, d, yy]) => {
+    line(16, yy, 284, yy, T.line, 1);
+    text(n, 16, yy + 21, { size: 15, weight: 600 });
+    text(v, 284, yy + 22, { size: 18, weight: 600, mono: true, align: 'right' });
+    text(d, 16, yy + 38, { size: 11, weight: 400, color: T.muted });
+  });
+  line(16, 390, 284, 390, T.line, 1);
+  [['Strong vs', 'Fire', 16], ['Weak to', 'Lightning', 112], ['ATK', String(c.atk), 214]].forEach(([l, v, xx]) => {
+    text(l, xx, 406, { size: 10, weight: 400, color: T.muted });
+    text(v, xx, 422, { size: 12, weight: 600, mono: l === 'ATK' });
+  });
+  rrect(12, 434, 276, 92, 8, null, T.line, 1);
+  text('Pulled from your face-down pile', 24, 456, { size: 12, weight: 600 });
+  ['Every card is generated onchain when it', 'is drawn. No NFT, no wallet setup.', 'Draw 5 of 10.'].forEach((l, i) =>
+    text(l, 24, 476 + i * 15, { size: 11, weight: 400, color: T.muted }));
+  text('Card Battle · best of 3', 16, 548, { size: 10, weight: 500, mono: true, color: T.muted });
+  text('★', 284, 549, { size: 12, color: T.legendary, align: 'right' });
+  ctx.restore();
+}
+// Board/hand card: 300 x 400 px at s = 1.
+const SLOT_W = 300, SLOT_H = 400, SLOT_GAP = 24;
+const slotX = i => GUTTER + i * (SLOT_W + SLOT_GAP);
+function slotCard(x, y, s, c, o = {}) {
+  const elc = T[EL[c.el]], hp = o.hp ?? c.hp, side = o.side || 'you';
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  rrect(0, 0, SLOT_W, SLOT_H, 22, T.raised, rarityColor(c), 3);
+  if (o.selected) rrect(-10, -10, SLOT_W + 20, SLOT_H + 20, 30, null, T.purple, 5);
+  ctx.save(); ctx.beginPath(); ctx.roundRect(16, 16, 268, 168, 12); ctx.clip();
+  if (IMG[c.id]) ctx.drawImage(IMG[c.id], 16, 16, 268, 168);
+  if (c.rarity === 3) foil(16, 16, 268, 168, o.t || 0, 1);
+  ctx.restore();
+  rrect(16, 16, 268, 168, 12, null, elc, 2);
+  text(c.name, 18, 230, { size: 32, weight: 700, ls: -.4 });
+  chip(c.el.toUpperCase(), 18, 248, { size: 16, bg: T.surface, border: elc, color: elc, r: 6 });
+  text(`ATK ${c.atk}`, 282, 274, { size: 24, weight: 500, mono: true, align: 'right', base: 'middle' });
+  if (o.bar !== false) {
+    const pending = o.pending || 0, fw = 264 * clamp((hp - pending) / c.hp), pw = 264 * clamp(pending / c.hp);
+    const col = side === 'you' ? T.purple : T.berry;
+    rrect(18, 320, 264, 14, 7, T.sunken);
+    if (fw > 0) rrect(18, 320, Math.max(fw, 14), 14, 7, col);
+    if (pw > 0) { ctx.save(); ctx.globalAlpha = .4; ctx.fillStyle = col; ctx.fillRect(18 + fw, 320, pw, 14); ctx.restore(); }
+    text('HP', 18, 376, { size: 18, color: T.muted, ls: 1.5 });
+    text(fmt(Math.max(0, hp - pending)), 282, 376, { size: 28, weight: 600, mono: true, align: 'right' });
+  }
+  ctx.restore();
+}
+function emptySlot(x, y, s = 1, label = 'Empty slot') {
+  rrect(x, y, SLOT_W * s, SLOT_H * s, 22 * s, null, T.muted, 2, [10, 10]);
+  text(label, x + SLOT_W * s / 2, y + SLOT_H * s / 2, { size: 22 * s, weight: 600, color: T.muted, align: 'center', base: 'middle' });
+}
+function pile(x, y, s, n) {
+  for (let i = n - 1; i >= 0; i--) cardBack(x + i * 2.5 * s, y - i * 4 * s, s);
+}
+function pressRing(cx, cy, t0, t) {
+  const p = prog(t, t0, t0 + .5); if (p <= 0 || p >= 1) return;
+  ctx.save(); ctx.globalAlpha = 1 - p;
+  ctx.beginPath(); ctx.arc(cx, cy, 30 + outExpo(p) * 70, 0, Math.PI * 2); ctx.strokeStyle = T.purple; ctx.lineWidth = 5; ctx.stroke();
+  ctx.globalAlpha = (1 - p) * .9; ctx.beginPath(); ctx.arc(cx, cy, 26 * (1 - p * .4), 0, Math.PI * 2); ctx.fillStyle = T.purple; ctx.fill();
+  ctx.restore();
+}
+
+// ---------- S1: hook ----------
+function sHook(t) {
+  bg(T.surface); topBar(t);
+  headline(t, ['Every move is', 'a transaction.'], .5, SCENE.draw, { size: 104, y: 420 });
+  // Ten face-down cards drop onto the pile.
+  const s = .9, px = W / 2 - 150 * s, py = 860;
+  for (let i = 0; i < 10; i++) {
+    const t0 = B(1) + i * .06, p = outCubic(prog(t, t0, t0 + .32));
+    if (p <= 0) continue;
+    ctx.save(); ctx.globalAlpha = clamp(p * 3);
+    cardBack(px + i * 2.5 * s, py - i * 4 * s - (1 - p) * 500, s);
+    ctx.restore();
+  }
+  // Riffle on beat 5: the top three cards fan out and back.
+  const a = outExpo(prog(t, B(3), B(5)));
+  const cnt = outExpo(prog(t, B(2), B(2.5)));
+  ctx.save(); ctx.globalAlpha = cnt;
+  text('10', W / 2, py + 560 * s + 90, { size: 56, weight: 600, mono: true, align: 'center' });
+  text('FACE-DOWN CARDS', W / 2, py + 560 * s + 132, { size: 18, color: T.muted, ls: 2.2, align: 'center' });
+  ctx.restore();
+  const facts = ['1 turn = 1 tx', '~0.01 MON', 'Monad testnet'];
+  facts.forEach((f, i) => {
+    const p = outExpo(prog(t, B(4) + i * .1, B(4) + .5 + i * .1));
+    ctx.save(); ctx.globalAlpha = p * a; ctx.translate(0, (1 - p) * 30);
+    const ws = facts.map(x => measure(x, 26, 600, true) + 36), total = ws.reduce((q, w) => q + w, 0) + 20 * 2;
+    let x0 = W / 2 - total / 2; for (let j = 0; j < i; j++) x0 += ws[j] + 20;
+    chip(f, x0, 1700, { size: 26, mono: true, bg: i === 0 ? T.purpleTint : T.surface, color: i === 0 ? T.purpleInk : T.ink, border: i === 0 ? null : T.line });
+    ctx.restore();
+  });
+}
+
+// ---------- S2: draw ----------
+const HAND_Y = 1390, HAND_S = .8;
+const handX = (i, n) => W / 2 - (n * SLOT_W * HAND_S + (n - 1) * 30) / 2 + i * (SLOT_W * HAND_S + 30);
+function sDraw(t) {
+  bg(T.surface); topBar(t);
+  headline(t, ['Draw a card.', 'Every turn.'], SCENE.draw + .25, SCENE.place, { size: 104, y: 330 });
+  // Pile slides to the upper left.
+  const mv = inOutExpo(prog(t, B(8), B(8.9)));
+  const ps = lerp(.9, .5, mv), px = lerp(W / 2 - 135, GUTTER, mv), py = lerp(860, 560, mv);
+  const lifted = t >= B(9);
+  pile(px, py, ps, lifted ? 5 : 6);
+  ctx.save(); ctx.globalAlpha = mv;
+  text(lifted ? '5 left' : '6 left', px + 150 * ps, py + 560 * ps + 50, { size: 26, weight: 600, mono: true, align: 'center', color: T.muted });
+  ctx.restore();
+  // The top card flies to center, flips, lands face up.
+  const cs = 1.5, cx = W / 2, cy = 1000;
+  const fly = outExpo(prog(t, B(9), B(10)));
+  const flip = prog(t, B(9.4), B(10));
+  const toHand = inOutExpo(prog(t, B(16.25), B(17.25)));
+  if (lifted) {
+    const sx0 = px + 150 * ps, sy0 = py + 280 * ps - 20;
+    const hx = handX(1, 3) + SLOT_W * HAND_S / 2, hy = HAND_Y + SLOT_H * HAND_S / 2;
+    const x = lerp(lerp(sx0, cx, fly), hx, toHand), y = lerp(lerp(sy0, cy, fly), hy, toHand);
+    const sc = lerp(lerp(ps, cs, fly), 1, toHand);
+    const flipX = Math.abs(Math.cos(flip * Math.PI));
+    const front = flip >= .5;
+    // Rings mark the reveal on the drop.
+    const rp = prog(t, B(10), B(10) + .7);
+    if (rp > 0 && rp < 1 && toHand === 0) {
+      const g = outExpo(rp) * 120;
+      ctx.save(); ctx.globalAlpha = 1 - rp;
+      rrect(cx - 150 * cs - g, cy - 280 * cs - g, 300 * cs + 2 * g, 560 * cs + 2 * g, 22 + g, null, T.legendary, 4);
+      ctx.restore();
+    }
+    ctx.save(); ctx.translate(x, y);
+    if (toHand > 0) {
+      // Morph the full card into its hand card.
+      const hs = HAND_S;
+      const w = lerp(300 * cs, SLOT_W * hs, toHand), h = lerp(560 * cs, SLOT_H * hs, toHand);
+      if (toHand < .5) { ctx.globalAlpha = 1 - toHand * 2; cardFront(-w / 2, -h / 2, w / 300, CARDS.abyssnad, { t }); }
+      else { ctx.globalAlpha = (toHand - .5) * 2; slotCard(-SLOT_W * hs / 2, -SLOT_H * hs / 2, hs, CARDS.abyssnad, { t, bar: false }); }
+    } else {
+      ctx.scale(Math.max(.001, flipX), 1);
+      if (front) {
+        cardFront(-150 * sc, -280 * sc, sc, CARDS.abyssnad, { t, reveal: outExpo(prog(t, B(10.2), B(11.2))) });
+        ctx.save(); ctx.beginPath(); ctx.roundRect(-150 * sc, -280 * sc, 300 * sc, 560 * sc, 22); ctx.clip();
+        sweep(-150 * sc, -280 * sc, 300 * sc, 560 * sc, prog(t, B(10) + .05, B(10) + .7)); ctx.restore();
+      } else cardBack(-150 * sc, -280 * sc, sc);
+    }
+    ctx.restore();
+    // NEW badge.
+    const nb = outBack(prog(t, B(10.75), B(10.75) + .3), 1.4) * (1 - toHand);
+    if (nb > 0) {
+      ctx.save(); ctx.translate(cx + 150 * cs - 20, cy - 280 * cs + 10); ctx.rotate(.08); ctx.scale(nb, nb);
+      chip('NEW', 0, -24, { size: 30, bg: T.purple, color: T.onPurple, align: 'center', r: 10, ls: 3 });
+      ctx.restore();
+    }
+    // Receipt chips under the card.
+    [[`Draw tx · ${shortHash(77)}`, T.surface, T.ink, T.line], [`Block #${fmt(BLOCK0 + 31)}`, T.purpleTint, T.purpleInk, null]].forEach(([s, b, c, br], i) => {
+      const p = outExpo(prog(t, B(11.5) + i * .25, B(11.5) + .5 + i * .25)) * (1 - toHand);
+      ctx.save(); ctx.globalAlpha = p; ctx.translate(0, (1 - p) * 24);
+      chip(s, W / 2, 1460 + i * 70, { size: 26, mono: true, bg: b, color: c, border: br, align: 'center' });
+      ctx.restore();
+    });
+  }
+  // Hand strip appears as the card arrives.
+  handStrip(t, prog(t, B(15.75), B(16.5)), [CARDS.embrit, null, CARDS.voltnad], 3);
+}
+function handStrip(t, a, cards, n, sel = -1, selLift = 0) {
+  if (a <= 0) return;
+  const e = outExpo(a);
+  ctx.save(); ctx.globalAlpha = e; ctx.translate(0, (1 - e) * 80);
+  text('HAND', GUTTER, HAND_Y - 36, { size: 18, color: T.muted, ls: 2.2 });
+  text(String(cards.length), GUTTER + 82, HAND_Y - 36, { size: 22, weight: 600, mono: true });
+  cards.forEach((c, i) => {
+    if (!c) return;
+    const x = typeof n === 'function' ? n(i) : handX(i, n);
+    slotCard(x, HAND_Y - (i === sel ? selLift : 0), HAND_S, c, { t, bar: false, selected: i === sel && selLift > 0 });
+  });
+  ctx.restore();
+}
+
+// ---------- S3: place ----------
+const BOARD_Y = 640;
+function sPlace(t) {
+  bg(T.surface); topBar(t);
+  headline(t, ['Place it.'], SCENE.place + .25, SCENE.attack, { size: 104, y: 330, total: 2 });
+  headline(t, ['Or hold it.'], 27, SCENE.attack, { size: 104, y: 330 + 112, row: 1, total: 2 });
+  const bin = outExpo(prog(t, B(20), B(21)));
+  ctx.save(); ctx.globalAlpha = bin; ctx.translate(0, (1 - bin) * -60);
+  text('YOUR BOARD', GUTTER, BOARD_Y - 36, { size: 18, color: T.muted, ls: 2.2 });
+  chip('Your turn', W - GUTTER, BOARD_Y - 74, { size: 22, bg: T.purple, color: T.onPurple, align: 'right' });
+  slotCard(slotX(0), BOARD_Y, 1, CARDS.dripnad, { t });
+  slotCard(slotX(1), BOARD_Y, 1, CARDS.sparkit, { t });
+  const landed = t >= B(25.5);
+  if (!landed) emptySlot(slotX(2), BOARD_Y);
+  ctx.restore();
+  // Select (purple line), then the card slides into slot 3.
+  const lift = outExpo(prog(t, B(23), B(23.4)));
+  const go = outExpo(prog(t, B(24.5), B(25.5)));
+  const regroup = inOutCubic(prog(t, B(25.5), B(26.5)));
+  const posFor = i => lerp(handX(i, 3), handX(i === 0 ? 0 : 1, 2), regroup);
+  handStrip(t, 1, [CARDS.embrit, go > 0 ? null : CARDS.abyssnad, CARDS.voltnad], posFor, 1, lift * 40);
+  if (go > 0) {
+    const x = lerp(handX(1, 3), slotX(2), go), y = lerp(HAND_Y - 40, BOARD_Y, go), s = lerp(HAND_S, 1, go);
+    // Impact square at landing.
+    const lp = prog(t, B(25.5), B(25.5) + .45);
+    if (lp > 0 && lp < 1) { const g = outExpo(lp) * 50; ctx.save(); ctx.globalAlpha = 1 - lp; rrect(slotX(2) - g, BOARD_Y - g, SLOT_W + 2 * g, SLOT_H + 2 * g, 22 + g, null, T.purple, 4); ctx.restore(); }
+    slotCard(x, y, s, CARDS.abyssnad, { t, bar: go > .85, selected: go < 1 });
+  }
+  pressRing(handX(1, 3) + SLOT_W * HAND_S / 2, HAND_Y + 140, B(23), t);
+  // "Place on board" action chip.
+  const pa = outExpo(prog(t, B(23.6), B(24))) * (1 - prog(t, B(24.5), B(24.9)));
+  if (pa > 0) { ctx.save(); ctx.globalAlpha = pa; chip('Place on board', W / 2, HAND_Y - 120, { size: 28, bg: T.purple, color: T.onPurple, align: 'center', r: 14 }); ctx.restore(); }
+  // Tx receipt after placing; the held card gets a label.
+  const rp = outExpo(prog(t, B(26), B(26.6)));
+  if (rp > 0) {
+    ctx.save(); ctx.globalAlpha = rp;
+    chip(`1 tx · ${shortHash(91)} · #${fmt(BLOCK0 + 52)}`, W / 2, BOARD_Y + SLOT_H + 40, { size: 24, mono: true, bg: T.purpleTint, color: T.purpleInk, align: 'center' });
+    ctx.restore();
+  }
+  const hp = outExpo(prog(t, B(28.5), B(29)));
+  if (hp > 0) {
+    ctx.save(); ctx.globalAlpha = hp;
+    chip('Held for later', handX(0, 2) + SLOT_W * HAND_S / 2, HAND_Y + SLOT_H * HAND_S + 28, { size: 20, bg: T.surface, border: T.line, color: T.ink, align: 'center' });
+    ctx.restore();
+    pressRing(handX(0, 2) + SLOT_W * HAND_S / 2, HAND_Y + 160, B(28.5), t);
+  }
+}
+
+// ---------- S4: attack, KO, victory ----------
+const OPP_Y = 330, ME_Y = 1050, S4 = .9;
+const s4x = i => W / 2 - (3 * SLOT_W * S4 + 2 * SLOT_GAP) / 2 + i * (SLOT_W * S4 + SLOT_GAP);
+const ME = [CARDS.dripnad, CARDS.sparkit, CARDS.abyssnad];
+const MY_HITS = [{ dmg: 630, mult: '×1.5' }, { dmg: 288, mult: '×0.75' }, { dmg: 892, mult: '×1.5' }];
+const OPP_DMG = [367, 525];
+function drainHp(t, start, events) {
+  let hp = start, pending = 0;
+  events.forEach(([t0, d]) => {
+    if (t < t0) return;
+    const settle = t0 + .15, p = 1 - Math.pow(1 - prog(t, settle, settle + .25), 3);
+    if (t < settle) pending += d; else { hp -= d * p; pending += d * (1 - p); }
+  });
+  return { hp: Math.max(0, hp), pending: Math.min(pending, Math.max(0, hp)) };
+}
+function scoreDots(x, y, filled, color, align, fill2T, t) {
+  for (let i = 0; i < 2; i++) {
+    const cx = align === 'right' ? x - i * 40 : x + i * 40;
+    ctx.beginPath(); ctx.arc(cx, y, 13, 0, Math.PI * 2); ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+    let f = i < filled ? 1 : 0;
+    if (fill2T != null && i === 1) f = outBack(prog(t, fill2T, fill2T + .3), 1.6);
+    if (f > 0) { ctx.beginPath(); ctx.arc(cx, y, 13 * f, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); }
+  }
+}
+function sAttack(t) {
+  bg(T.surface); topBar(t);
+  if (LAND) headline(t, ['Two KOs', 'win.'], SCENE.attack + .5, SCENE.agent);
+  const lt = t - B(32);
+  const inO = outExpo(prog(lt, 0, .6)), inM = outExpo(prog(lt, .1, .7));
+  const vic = inOutExpo(prog(t, B(40), B(40.6)));
+  // Screen shake only on the big hit: 3 cycles, 240 ms.
+  const sk = t - ATTACK_HIT, shakeX = sk > 0 && sk < .24 ? Math.sin(sk / .24 * Math.PI * 6) * 10 * (1 - sk / .24) : 0;
+  ctx.save(); ctx.translate(shakeX, 0); ctx.globalAlpha = 1 - vic * .96;
+  // Score bar.
+  ctx.save(); ctx.globalAlpha *= inO;
+  rrect(GUTTER, 196, W - 2 * GUTTER, 84, 16, T.raised, T.line, 2);
+  text('AI Agent', GUTTER + 28, 248, { size: 28, weight: 600 });
+  chip('Lv.3', GUTTER + 158, 222, { size: 18, mono: true, bg: T.berryTint, color: T.berry });
+  scoreDots(GUTTER + 290, 238, 1, T.berry, 'left', null, t);
+  text('You', W - GUTTER - 28, 248, { size: 28, weight: 600, align: 'right' });
+  scoreDots(W - GUTTER - 110, 238, 1, T.purple, 'right', SCORE_AT, t);
+  ctx.restore();
+  // Opponent row; the front card is the target.
+  const target = drainHp(t, 1560, [[ATTACK_HIT, 1810]]);
+  const ko = outCubic(prog(t, KO_AT, KO_AT + .5));
+  const oppLunge = Math.sin(Math.PI * prog(t, B(33.5), B(34))) * 60;
+  ctx.save(); ctx.globalAlpha *= inO; ctx.translate(0, (1 - inO) * -120);
+  [[CARDS.blazenad, target.hp, target.pending], [CARDS.wavenad, 1900, 0]].forEach(([c, hp, pending], i) => {
+    ctx.save();
+    if (i === 0 && ko > 0) { ctx.globalAlpha *= 1 - ko; ctx.translate(s4x(0) + SLOT_W * S4 / 2, OPP_Y + 180); ctx.rotate(-ko * .3); ctx.translate(-(s4x(0) + SLOT_W * S4 / 2), -(OPP_Y + 180) - ko * 200); }
+    slotCard(s4x(i), OPP_Y + oppLunge, S4, c, { t, hp, pending, side: 'opp' });
+    ctx.restore();
+  });
+  emptySlot(s4x(2), OPP_Y, S4);
+  const tg = 1 - ko;
+  if (tg > 0) { ctx.save(); ctx.globalAlpha *= tg; chip('TARGET', s4x(0) + SLOT_W * S4 / 2, OPP_Y + SLOT_H * S4 + 14, { size: 18, bg: T.berryTint, color: T.berry, align: 'center' }); ctx.restore(); }
+  if (ko > 0) { ctx.save(); ctx.globalAlpha *= outExpo(prog(t, KO_AT, KO_AT + .3)); chip('KO', s4x(0) + SLOT_W * S4 / 2, OPP_Y + 120, { size: 64, bg: T.berry, color: T.onPurple, align: 'center', r: 14, ls: 4 }); ctx.restore(); }
+  ctx.restore();
+  // Turn banner.
+  const myTurn = t >= B(35);
+  const bp = outExpo(prog(t, myTurn ? B(35) : B(33), (myTurn ? B(35) : B(33)) + .35));
+  ctx.save(); ctx.globalAlpha *= bp * inO;
+  chip(myTurn ? 'Your turn' : "Opponent's turn", W / 2, 765 + (1 - bp) * 20, { size: 30, bg: myTurn ? T.purple : T.berry, color: T.onPurple, align: 'center', r: 12 });
+  ctx.restore();
+  // Your row; all three cards lunge at the front card together.
+  const front = drainHp(t, 1720, [[B(33.75), OPP_DMG[0] + OPP_DMG[1]]]);
+  const lunge = Math.sin(Math.PI * prog(t, B(36.15), B(36.85))) * -110;
+  ctx.save(); ctx.globalAlpha *= inM; ctx.translate(0, (1 - inM) * 120);
+  ME.forEach((c, i) => slotCard(s4x(i), ME_Y + lunge * (i === 1 ? .8 : 1), S4, c, { t, side: 'you', ...(i === 0 ? front : {}) }));
+  ctx.restore();
+  // Opponent damage on your front card.
+  OPP_DMG.forEach((d, i) => {
+    const p = prog(t, B(33.75) + i * .08, B(33.75) + .6 + i * .08); if (p <= 0 || p >= 1) return;
+    text('-' + d, s4x(0) + 70 + i * 140, ME_Y - 10 - outCubic(p) * 60, { size: 46, weight: 600, mono: true, color: T.muted, align: 'center', alpha: 1 - p * p });
+  });
+  // Your three hits float off the target.
+  MY_HITS.forEach((h, i) => {
+    const t0 = ATTACK_HIT + i * .06, p = prog(t, t0, t0 + 1.1); if (p <= 0 || p >= 1) return;
+    const x = 200 + i * 340, y = OPP_Y + 150 - outCubic(p) * 80;
+    const hot = h.mult === '×1.5';
+    ctx.save(); ctx.globalAlpha *= 1 - inCubic(prog(p, .6, 1)); ctx.translate(x, y); ctx.scale(lerp(1.25, 1, outExpo(clamp(p * 4))), lerp(1.25, 1, outExpo(clamp(p * 4))));
+    chip('-' + h.dmg, 0, -50, { size: 52, weight: 700, mono: true, bg: T.raised, border: T.berry, color: T.berry, align: 'center', r: 14, lw: 3 });
+    chip(h.mult, 0, 50, { size: 22, mono: true, bg: hot ? T.berry : T.raised, color: hot ? T.onPurple : T.muted, border: hot ? null : T.line, align: 'center' });
+    ctx.restore();
+  });
+  // Super effective label and total.
+  const se = outExpo(prog(t, ATTACK_HIT + .1, ATTACK_HIT + .45)) * (1 - prog(t, B(39.5), B(40)));
+  if (se > 0) {
+    ctx.save(); ctx.globalAlpha *= se; ctx.translate(W / 2, 880); ctx.scale(lerp(1.3, 1, se), lerp(1.3, 1, se));
+    chip('Super effective ×1.5', 0, -30, { size: 34, bg: T.berry, color: T.onPurple, align: 'center', r: 12 });
+    ctx.restore();
+    const tp = outExpo(prog(t, B(37), B(37) + .3));
+    ctx.save(); ctx.globalAlpha *= tp * se;
+    text('-1,810', W / 2, 990, { size: 96, weight: 700, mono: true, color: T.berry, align: 'center', ls: -3 });
+    ctx.restore();
+  }
+  // Actions.
+  ctx.save(); ctx.globalAlpha *= inM;
+  const ended = t >= KO_AT;
+  let press = 1; { const dt = t - B(36); if (dt >= 0 && dt < .2) press = dt < .08 ? lerp(1, .95, dt / .08) : lerp(.95, 1, outCubic((dt - .08) / .12)); }
+  ctx.save(); ctx.translate(W / 2, 1640); ctx.scale(press, press);
+  rrect(-(W / 2 - GUTTER), -70, W - 2 * GUTTER, 140, 28, ended || !myTurn ? T.sunken : T.purple);
+  text('Attack', 0, 4, { size: 54, weight: 700, color: ended || !myTurn ? T.muted : T.onPurple, align: 'center', base: 'middle' });
+  ctx.restore();
+  if (!LAND) rrect(GUTTER, 1740, W - 2 * GUTTER, 100, 20, T.deep);
+  if (!LAND) text('Special ×2', GUTTER + 36, 1792, { size: 34, weight: 600, color: T.onDeep, base: 'middle' });
+  if (!LAND) text('Once per match', W - GUTTER - 36, 1792, { size: 24, weight: 500, color: 'rgba(251,250,249,.75)', align: 'right', base: 'middle' });
+  ctx.restore();
+  pressRing(W / 2 + 120, 1640, B(36), t);
+  ctx.restore();
+  // Victory and the rule.
+  if (vic > 0) {
+    kinetic('Victory', W / 2, 860, { size: 220, align: 'center', color: T.ink, ls: -6, p: j => outExpo(prog(t, B(40) + .2 + j * .035, B(40) + .7 + j * .035)) });
+    const sp = outExpo(prog(t, B(41), B(41.6)));
+    ctx.save(); ctx.globalAlpha = sp;
+    scoreDots(W / 2 - 160, 990, 2, T.purple, 'left', null, t);
+    text('2 KOs', W / 2 + 40, 1002, { size: 40, weight: 600, mono: true });
+    ctx.restore();
+    if (!LAND) headline(t, ['Two KOs win.'], 42, SCENE.agent, { size: 104, y: 1240 });
+  }
+}
+
+// ---------- S5: AI Agent (deep) ----------
+const LESSONS = [
+  'Hold Water cards until a Fire card is in front.',
+  'Save Special for the turn it secures a KO.',
+  'Fill all three slots before trading hits.',
+];
+function wrap(str, size, weight, maxW) {
+  const words = str.split(' '), out = []; let cur = '';
+  words.forEach(w => { const n = cur ? cur + ' ' + w : w; if (measure(n, size, weight) > maxW && cur) { out.push(cur); cur = w; } else cur = n; });
+  if (cur) out.push(cur); return out;
+}
+function sAgent(t) {
+  bg(T.deep); topBar(t, true);
+  headline(t, ['An AI Agent', 'that learns from', 'every duel.'], SCENE.agent + .25, SCENE.swarm, { size: 96, y: 360, color: D.ink });
+  const pin = outExpo(prog(t, B(48.5), B(49.3)));
+  ctx.save(); ctx.globalAlpha = pin; ctx.translate(0, (1 - pin) * 80);
+  const px = GUTTER, py = 780, pw = W - 2 * GUTTER;
+  rrect(px, py, pw, 900, 28, null, D.line, 2);
+  text('AI AGENT', px + 48, py + 80, { size: 20, color: D.muted, ls: 2.4 });
+  // Level climbs 1 -> 4 on three beats.
+  const lvl = 1 + [49, 50, 51].filter(k => t >= B(k)).length;
+  const last = [49, 50, 51].filter(k => t >= B(k)).pop();
+  const lp = last ? outExpo(prog(t, B(last), B(last) + .25)) : 1;
+  text('Lv.', px + 48, py + 220, { size: 110, weight: 600, mono: true, color: D.ink });
+  rolling(String(lvl), lvl > 1 ? String(lvl - 1) : null, lp, px + 48 + measure('Lv.', 110, 600, true), py + 220, 110, D.purpleInk);
+  const xp = clamp((lvl - 1) / 3 + (last ? 0 : 0));
+  rrect(px + 48, py + 270, pw - 96, 14, 7, 'rgba(228,223,255,.18)');
+  rrect(px + 48, py + 270, Math.max(14, (pw - 96) * lerp((lvl - 2) / 3, (lvl - 1) / 3, lp) * (lvl > 1 ? 1 : 0) + (lvl === 1 ? 14 : 0)), 14, 7, D.lavender);
+  text(`${fmt(96 + lvl * 8)} duels played`, px + pw - 48, py + 220, { size: 26, weight: 500, mono: true, color: D.muted, align: 'right' });
+  line(px + 48, py + 350, px + pw - 48, py + 350, D.line, 2);
+  // Lessons take turns.
+  const idx = t >= B(54) ? 2 : t >= B(52) ? 1 : t >= B(50) ? 0 : -1;
+  if (idx >= 0) {
+    const k = [50, 52, 54][idx], p = outExpo(prog(t, B(k), B(k) + .45));
+    const out = idx < 2 ? inExpo(prog(t, B(k + 2) - .25, B(k + 2))) : 0;
+    ctx.save(); ctx.globalAlpha = p * (1 - out); ctx.translate((1 - p) * 120 - out * 120, 0);
+    text(`LESSON ${idx + 1} OF 3`, px + 48, py + 430, { size: 20, color: D.muted, ls: 2.4 });
+    wrap(LESSONS[idx], 54, 600, pw - 96).forEach((l, i) => text(l, px + 48, py + 520 + i * 68, { size: 54, weight: 600, color: D.ink, ls: -.5 }));
+    ctx.restore();
+  }
+  [0, 1, 2].forEach(i => {
+    const on = idx >= i;
+    ctx.beginPath(); ctx.arc(px + 60 + i * 34, py + 830, 9, 0, Math.PI * 2);
+    ctx.fillStyle = on ? D.lavender : 'rgba(228,223,255,.25)'; ctx.fill();
+  });
+  ctx.restore();
+}
+
+// ---------- S6: swarm ----------
+function sSwarm(t) {
+  bg(T.surface); topBar(t);
+  headline(t, ['Many duels.', 'In parallel.'], SCENE.swarm + .25, SCENE.close, { size: 96, y: 330, total: 3 });
+  headline(t, ['300 ms blocks.'], SCENE.swarm + 1, SCENE.close, { size: 96, y: 330 + 2 * 104, color: T.purpleInk, row: 2, total: 3 });
+  const lt = t - B(56);
+  const cols = 4, rows = 5, gap = 18, tw = (W - 2 * GUTTER - gap * (cols - 1)) / cols, th = 176;
+  const gy = 820;
+  // Counter.
+  const ca = outExpo(prog(t, B(56.5), B(57.2)));
+  ctx.save(); ctx.globalAlpha = ca;
+  text('ONCHAIN TX / SEC', GUTTER, 660, { size: 18, color: T.muted, ls: 2.2 });
+  const rate = Math.round(lerp(4, 38, outCubic(prog(t, B(56.5), B(61)))));
+  text(String(rate), GUTTER, 760, { size: 88, weight: 600, mono: true });
+  text('MATCHES LIVE', W - GUTTER, 660, { size: 18, color: T.muted, ls: 2.2, align: 'right' });
+  text('20', W - GUTTER, 760, { size: 88, weight: 600, mono: true, align: 'right' });
+  ctx.restore();
+  for (let i = 0; i < cols * rows; i++) {
+    const c = i % cols, r = Math.floor(i / cols);
+    const a = outExpo(prog(lt, .15 + (c + r) * .04, .65 + (c + r) * .04));
+    if (a <= 0) continue;
+    const x = GUTTER + c * (tw + gap), y = gy + r * (th + gap);
+    const R = rng(i * 97 + 3);
+    ctx.save(); ctx.globalAlpha = a; ctx.translate(0, (1 - a) * 60);
+    rrect(x, y, tw, th, 16, T.raised, T.line, 2);
+    text(`#${fmt(1040 + i * 7)}`, x + 16, y + 30, { size: 16, weight: 500, mono: true, color: T.muted });
+    // Turns advance at each tile's own pace.
+    const pace = .35 + R() * .3, phase = R() * pace, turn = Math.floor((lt + phase) / pace);
+    const tr = rng(i * 31 + turn);
+    const sOpp = Math.min(2, Math.floor(turn / 5 + R() * 1.4)), sMe = Math.min(2, Math.floor(turn / 6 + R() * 1.4));
+    for (let d = 0; d < 2; d++) {
+      ctx.beginPath(); ctx.arc(x + tw - 52 + d * 18, y + 24, 6, 0, Math.PI * 2); ctx.fillStyle = d < sOpp ? T.berry : T.sunken; ctx.fill();
+      ctx.beginPath(); ctx.arc(x + tw - 52 + d * 18, y + th - 22, 6, 0, Math.PI * 2); ctx.fillStyle = d < sMe ? T.purple : T.sunken; ctx.fill();
+    }
+    for (let s = 0; s < 3; s++) {
+      const sw = (tw - 32 - 16) / 3, sx = x + 16 + s * (sw + 8);
+      [['opp', y + 46, T.berry], ['you', y + 100, T.purple]].forEach(([side, sy, col]) => {
+        const filled = tr() > .2;
+        rrect(sx, sy, sw, 40, 6, filled ? T.sunken : null, filled ? null : T.line, 1.5);
+        if (filled) { const hp = .2 + tr() * .8; rrect(sx + 4, sy + 30, (sw - 8) * hp, 6, 3, col); }
+      });
+    }
+    // Pulse a line when this tile's tx lands.
+    const since = (lt + phase) % pace;
+    if (since < .18) { ctx.save(); ctx.globalAlpha *= 1 - since / .18; rrect(x - 3, y - 3, tw + 6, th + 6, 18, null, T.purple, 3); ctx.restore(); }
+    ctx.restore();
+  }
+}
+
+// ---------- S7: close (deep) ----------
+function sClose(t) {
+  bg(T.deep);
+  const t0 = B(62);
+  // Three cards fan open, then flip to the three Legendaries.
+  const fan = outExpo(prog(t, B(61.9), B(62.6)));
+  const ids = ['infernad', 'abyssnad', 'tempestnad'];
+  ids.forEach((id, i) => {
+    const ang = (i - 1) * .2 * fan, s = .62;
+    const flip = prog(t, B(63) + i * .1, B(63.6) + i * .1);
+    ctx.save(); ctx.translate(W / 2 + (i - 1) * 230 * fan, 760 + Math.abs(i - 1) * 40 * fan); ctx.rotate(ang);
+    ctx.scale(Math.max(.001, Math.abs(Math.cos(flip * Math.PI))), 1);
+    if (flip < .5) cardBack(-150 * s, -280 * s, s);
+    else {
+      rrect(-150 * s, -280 * s, 300 * s, 560 * s, 14, T.raised, T.legendary, 3);
+      ctx.save(); ctx.beginPath(); ctx.roundRect(-150 * s + 12, -280 * s + 12, 300 * s - 24, 560 * s - 24, 10); ctx.clip();
+      if (IMG[id]) { const ih = (300 * s - 24) / 1.6; ctx.drawImage(IMG[id], -150 * s + 12, -ih / 2, 300 * s - 24, ih); }
+      foil(-150 * s + 12, -280 * s + 12, 300 * s - 24, 560 * s - 24, t, 1);
+      ctx.restore();
+    }
+    ctx.restore();
+  });
+  const wp = outExpo(prog(t, t0, t0 + .7));
+  kinetic('Monicard', W / 2, 1290, { size: 190, align: 'center', color: D.ink, ls: -6, p: j => outExpo(prog(t, t0 + j * .03, t0 + .45 + j * .03)) });
+  const a1 = outExpo(prog(t, B(63), B(63.7)));
+  text('Draw. Place. Win.', W / 2, 1400 + (1 - a1) * 30, { size: 64, weight: 600, color: D.lavender, align: 'center', alpha: a1, ls: -1 });
+  const a2 = outExpo(prog(t, B(64), B(64.7)));
+  ctx.save(); ctx.globalAlpha = a2; ctx.translate(0, (1 - a2) * 24);
+  chip('monicard.xyz', W / 2, 1490, { size: 40, mono: true, bg: D.ink, color: T.deep, align: 'center', r: 12 });
+  text('LIVE ON MONAD TESTNET', W / 2, 1640, { size: 22, color: D.muted, ls: 3, align: 'center' });
+  ctx.restore();
+  line(W / 2 - 300 * wp, 1330, W / 2 + 300 * wp, 1330, D.line, 2);
+  const fo = prog(t, DURATION - .35, DURATION);
+  if (fo > 0) bg(`rgba(0,0,0,${fo})`);
+}
+
+// Transitions: deep panels for scenes on deep, light panels back to light.
+function wipe(t, k, color, dir) {
+  const a = B(k) - .4, b = B(k);
+  if (t < a || t >= b + .4) return;
+  const n = 6;
+  ctx.fillStyle = color;
+  for (let i = 0; i < n; i++) {
+    const cover = inOutExpo(prog(t, a + i * .03, b - (n - 1 - i) * .01));
+    const reveal = inOutExpo(prog(t, b + i * .03, b + .4 - (n - 1 - i) * .01));
+    const sh = CH / n, y = i * sh;
+    if (dir === 'in') ctx.fillRect(0, y - 1, CW * cover, sh + 2);
+    else ctx.fillRect(CW * reveal, y - 1, CW * (1 - reveal), sh + 2);
+  }
+}
+
+// Landscape crop of the 1080 x 1920 stage per scene: [top, bottom, centered].
+const CROP = { hook: [640, 1790], draw: [470, 1760], place: [560, 1760], attack: [180, 1725, false, { x: 760, y: 120, w: 1100, h: 940 }], agent: [740, 1720], swarm: [590, 1800], close: [540, 1700, true] };
+const STAGE_BOX = { x: 860, y: 150, w: 1000, h: 890 };
+function render(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  const [name, fn] = t < B(SCENE.draw) ? ['hook', sHook] : t < B(SCENE.place) ? ['draw', sDraw] : t < B(SCENE.attack) ? ['place', sPlace]
+    : t < B(SCENE.agent) ? ['attack', sAttack] : t < B(SCENE.swarm) ? ['agent', sAgent] : t < B(SCENE.close) ? ['swarm', sSwarm] : ['close', sClose];
+  overlay = [];
+  if (LAND) {
+    const [y0, y1, centered, ownBox] = CROP[name];
+    const box = ownBox || (centered ? { x: 0, y: 60, w: CW, h: CH - 120 } : STAGE_BOX);
+    const s = Math.min(box.w / W, box.h / (y1 - y0));
+    ctx.save();
+    ctx.translate(box.x + box.w / 2 - W * s / 2, box.y + box.h / 2 - (y1 - y0) * s / 2);
+    ctx.scale(s, s); ctx.translate(0, -y0);
+    fn(t);
+    ctx.restore();
+    overlay.forEach(f => f());
+  } else fn(t);
+  // Cover each hard cut: panels in before the cut, out after it.
+  [[SCENE.agent, T.deep], [SCENE.swarm, T.surface], [SCENE.close, T.deep]].forEach(([k, c]) => wipe(t, k, c, t < B(k) ? 'in' : 'out'));
+}
+window.render = render;
+window.ready = (async () => {
+  await Promise.all(['400 40px "Schibsted Grotesk"', '600 40px "Schibsted Grotesk"', '700 40px "Schibsted Grotesk"', '800 40px "Schibsted Grotesk"', '500 40px "JetBrains Mono"', '600 40px "JetBrains Mono"', '700 40px "JetBrains Mono"'].map(f => document.fonts.load(f)));
+  await loadImages();
+  render(Number(new URLSearchParams(location.search).get('t') || 0));
+  return document.fonts.check('800 40px "Schibsted Grotesk"') && document.fonts.check('600 40px "JetBrains Mono"');
+})();
+</script>
+</body>
+</html>

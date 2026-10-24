@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monicard Ad</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Schibsted+Grotesk:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --surface:#fbfaf9;--raised:#fff;--sunken:#efeef2;--line:#e3e0ea;--ink:#0e100f;--muted:#5c5a66;
+  --purple:#6e54ff;--purple-ink:#5235f0;--purple-tint:#f1efff;--deep:#200052;--on-deep:#fbfaf9;
+  --berry:#a0055d;--berry-tint:#fbe8f2;--fire:#b8400b;--gold:#a8741a;--gold-l:#f0c060;
+  --sans:"Schibsted Grotesk","Helvetica Neue",Arial,sans-serif;--mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#000;overflow:hidden}
+body.rec{cursor:none}
+#fit{position:fixed;inset:0}
+#stage{width:1080px;height:1920px;position:absolute;left:50%;top:50%;overflow:hidden;background:var(--surface);font-family:var(--sans);color:var(--ink);transform-origin:center}
+.scene{position:absolute;inset:0;opacity:0;pointer-events:none;transition:opacity .35s ease}
+.scene.on{opacity:1}
+.dark{background:var(--deep);color:var(--on-deep)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.kicker{font-family:var(--mono);font-size:30px;letter-spacing:.14em;text-transform:uppercase;color:var(--purple)}
+.dark .kicker{color:#b9adff}
+.h1{font-size:132px;line-height:.98;font-weight:900;letter-spacing:-.035em}
+.h2{font-size:96px;line-height:1;font-weight:800;letter-spacing:-.03em}
+.pad{position:absolute;left:96px;right:96px}
+.up{opacity:0;transform:translateY(40px);transition:opacity .5s ease,transform .5s cubic-bezier(.2,.8,.2,1)}
+.on .up{opacity:1;transform:none}
+.on .d1{transition-delay:.15s}.on .d2{transition-delay:.35s}.on .d3{transition-delay:.6s}.on .d4{transition-delay:.9s}
+
+/* S1 tap */
+#s1 .pad{top:300px}
+#tapbtn{position:absolute;left:50%;top:1180px;width:520px;height:520px;margin-left:-260px;border-radius:50%;background:var(--purple);color:#fff;display:grid;place-items:center;font-size:84px;font-weight:900;letter-spacing:-.02em}
+#tapbtn.hit{animation:hit .16s ease}
+@keyframes hit{50%{transform:scale(.93)}}
+.ring{position:absolute;left:50%;top:1440px;width:520px;height:520px;margin:-260px 0 0 -260px;border:4px solid var(--purple);border-radius:50%;animation:ring .7s ease-out forwards}
+@keyframes ring{to{transform:scale(1.7);opacity:0}}
+#s1 .feed{position:absolute;left:96px;right:96px;top:820px;height:300px;overflow:hidden;font-size:34px;color:var(--muted)}
+#s1 .feed div{height:60px;display:flex;justify-content:space-between;border-bottom:2px solid var(--line);align-items:center}
+#s1 .feed b{color:var(--purple-ink);font-weight:600}
+
+/* S2 pull */
+#s2 .pad{top:170px}
+.cardwrap{position:absolute;left:50%;top:520px;width:600px;height:1120px;margin-left:-300px;perspective:2400px}
+.card3d{width:100%;height:100%;position:relative;transform-style:preserve-3d;transition:transform 1.1s cubic-bezier(.3,1.3,.4,1)}
+.flip .card3d{transform:rotateY(180deg)}
+.face{position:absolute;inset:0;backface-visibility:hidden;border-radius:36px;overflow:hidden}
+.back{background:var(--deep);display:grid;place-items:center;border:6px solid var(--purple)}
+.back span{color:#fff;font-size:64px;font-weight:900;letter-spacing:-.02em}
+.front{transform:rotateY(180deg);background:var(--raised);border:10px solid var(--gold);padding:28px;display:flex;flex-direction:column;gap:20px}
+.front .top{display:flex;justify-content:space-between;align-items:baseline}
+.front .nm{font-size:58px;font-weight:800;letter-spacing:-.02em}
+.front .hp{font-family:var(--mono);font-size:40px;font-weight:700;color:var(--fire)}
+.front .art{height:400px;border-radius:20px;background:var(--sunken);display:grid;place-items:center;border:3px solid var(--line)}
+.front .art img{width:100%;height:100%;object-fit:contain}
+.front .row{display:flex;justify-content:space-between;font-size:30px;font-weight:600;color:var(--muted)}
+.front .move{border-top:3px solid var(--line);padding-top:18px;display:flex;justify-content:space-between;font-size:38px;font-weight:700}
+.front .move .mono{color:var(--fire)}
+.front .lore{font-size:27px;line-height:1.35;color:var(--muted);border:3px solid var(--line);border-radius:16px;padding:18px;font-style:italic}
+.chip{display:inline-block;font-family:var(--mono);font-size:28px;font-weight:700;padding:8px 18px;border-radius:999px;border:3px solid currentColor}
+.foil{position:absolute;inset:0;background:linear-gradient(115deg,transparent 30%,rgba(240,192,96,.55) 45%,rgba(255,255,255,.7) 50%,rgba(110,84,255,.35) 56%,transparent 70%);background-size:300% 100%;mix-blend-mode:multiply;animation:foil 2.4s linear infinite;pointer-events:none}
+@keyframes foil{from{background-position:120% 0}to{background-position:-120% 0}}
+#odds{position:absolute;left:96px;right:96px;bottom:110px;display:flex;justify-content:space-between;font-size:30px;color:var(--muted)}
+
+/* S3 duel */
+#s3 .pad{top:150px}
+.fighter{position:absolute;left:96px;right:96px;display:flex;flex-direction:column;gap:18px}
+.fighter .who{display:flex;justify-content:space-between;align-items:baseline;font-size:44px;font-weight:800}
+.fighter .who .mono{font-size:44px}
+.bar{height:44px;border-radius:999px;background:var(--sunken);overflow:hidden;border:3px solid var(--line)}
+.bar i{display:block;height:100%;width:100%;border-radius:999px;transition:width .25s ease}
+#p1{top:470px}#p1 .bar i{background:var(--purple)}
+#p2{top:700px}#p2 .bar i{background:var(--berry)}
+#p2 .who{color:var(--berry)}
+#arena{position:absolute;left:96px;right:96px;top:900px;height:560px;border:3px solid var(--line);border-radius:36px;background:var(--raised)}
+.pop{position:absolute;font-family:var(--mono);font-weight:700;font-size:64px;color:var(--purple-ink);animation:pop .8s ease-out forwards}
+@keyframes pop{from{transform:translateY(0) scale(.8);opacity:1}to{transform:translateY(-140px) scale(1.15);opacity:0}}
+#skill{position:absolute;left:96px;right:96px;top:1500px;height:150px;border-radius:28px;background:var(--deep);color:#fff;display:flex;justify-content:space-between;align-items:center;padding:0 48px;font-size:52px;font-weight:800;opacity:.25;transition:opacity .2s}
+#skill.ready{opacity:1}
+#skill .mono{color:#b9adff}
+#lat{position:absolute;left:96px;right:96px;top:1700px;display:flex;justify-content:space-between;font-size:32px;color:var(--muted)}
+#lat b{color:var(--purple-ink)}
+.shake{animation:shake .45s linear}
+@keyframes shake{20%{transform:translate(-18px,8px)}40%{transform:translate(16px,-10px)}60%{transform:translate(-12px,6px)}80%{transform:translate(8px,-4px)}}
+#victory{position:absolute;left:0;right:0;top:1020px;text-align:center;font-size:170px;font-weight:900;letter-spacing:-.04em;color:var(--purple);opacity:0;transform:scale(.7);transition:all .4s cubic-bezier(.2,1.4,.4,1)}
+#victory.show{opacity:1;transform:none}
+
+/* S4 agent */
+#s4 .pad{top:260px}
+#lvl{position:absolute;left:96px;right:96px;top:860px}
+#lvl .n{font-family:var(--mono);font-size:220px;font-weight:700;line-height:1;color:#fff}
+#lvl .n small{font-size:80px;color:#b9adff}
+.lessons{position:absolute;left:96px;right:96px;top:1180px;display:flex;flex-direction:column;gap:24px}
+.lesson{border:3px solid #4a3a8a;border-radius:24px;padding:28px 32px;font-size:36px;line-height:1.3;opacity:0;transform:translateX(-30px);transition:all .45s ease}
+.lesson.show{opacity:1;transform:none}
+.lesson .mono{display:block;font-size:26px;color:#b9adff;margin-bottom:8px}
+
+/* S5 swarm */
+#s5 .pad{top:170px}
+#grid{position:absolute;left:96px;right:96px;top:640px;display:grid;grid-template-columns:repeat(4,1fr);gap:22px}
+.mini{border:3px solid var(--line);border-radius:20px;padding:16px;background:var(--raised);display:flex;flex-direction:column;gap:10px}
+.mini .mono{font-size:22px;color:var(--muted)}
+.mini .b{height:16px;border-radius:9px;background:var(--sunken);overflow:hidden}
+.mini .b i{display:block;height:100%;transition:width .3s linear}
+.mini .b.a i{background:var(--purple)}.mini .b.z i{background:var(--berry)}
+#tps{position:absolute;left:96px;right:96px;bottom:120px;display:flex;justify-content:space-between;align-items:baseline}
+#tps .mono{font-size:96px;font-weight:700;color:var(--purple-ink)}
+#tps span{font-size:34px;color:var(--muted)}
+
+/* S6 end */
+#s6 .pad{top:560px;text-align:left}
+#s6 .h1{font-size:200px}
+#s6 .tag{margin-top:56px;font-size:64px;font-weight:700;color:#b9adff}
+#s6 .url{position:absolute;left:96px;right:96px;bottom:220px;font-family:var(--mono);font-size:38px;color:#fff;border-top:3px solid #4a3a8a;padding-top:36px}
+#s6 .url small{display:block;font-size:28px;color:#b9adff;margin-bottom:12px;letter-spacing:.12em;text-transform:uppercase}
+
+#hint{position:fixed;left:12px;bottom:10px;font:12px/1.4 var(--mono);color:#777}
+body.rec #hint{display:none}
+</style>
+</head>
+<body>
+<div id="fit"><div id="stage">
+
+  <section class="scene" id="s1">
+    <div class="pad">
+      <div class="kicker up">Monicard</div>
+      <div class="h1 up d1" style="margin-top:36px">Every tap<br>is a<br><span style="color:var(--purple)">transaction.</span></div>
+    </div>
+    <div class="feed mono" id="feed"></div>
+    <div id="tapbtn">TAP</div>
+  </section>
+
+  <section class="scene" id="s2">
+    <div class="pad">
+      <div class="kicker up">Step 1</div>
+      <div class="h2 up d1" style="margin-top:28px">Pull a Nadmon.</div>
+    </div>
+    <div class="cardwrap" id="cardwrap">
+      <div class="card3d">
+        <div class="face back"><span>Monicard</span></div>
+        <div class="face front">
+          <div class="top"><span class="nm">Infernad</span><span class="hp">HP 2,050</span></div>
+          <div class="art"><img src="../../docs/design-system/assets/Nadmon/infernad.svg" alt=""></div>
+          <div class="row"><span>Stage 3 · Fire</span><span class="chip" style="color:var(--gold)">LEGENDARY</span></div>
+          <div class="move"><span>Ember Rush</span><span class="mono">17 × tap</span></div>
+          <div class="move"><span>Last stand</span><span class="mono">1× per duel</span></div>
+          <div class="lore">Forged in the first block. Its flame burns hotter the closer it gets to defeat.</div>
+          <div class="foil"></div>
+        </div>
+      </div>
+    </div>
+    <div id="odds" class="mono"><span>Common 60%</span><span>Rare 28%</span><span>Epic 10%</span><span style="color:var(--gold)">Legendary 2%</span></div>
+  </section>
+
+  <section class="scene" id="s3">
+    <div class="pad">
+      <div class="kicker up">Step 2</div>
+      <div class="h2 up d1" style="margin-top:28px">Tap to fight. Live.</div>
+    </div>
+    <div class="fighter" id="p1"><div class="who"><span>You · Infernad</span><span class="mono" id="hp1">2,050</span></div><div class="bar"><i id="b1"></i></div></div>
+    <div class="fighter" id="p2"><div class="who"><span>AI Agent · Wavenad</span><span class="mono" id="hp2">1,900</span></div><div class="bar"><i id="b2"></i></div></div>
+    <div id="arena"></div>
+    <div id="victory">Victory</div>
+    <div id="skill"><span>Last stand</span><span class="mono">380 dmg</span></div>
+    <div id="lat" class="mono"><span>block <b id="blk">73,708,414</b></span><span>confirmed in <b id="ms">312</b> ms</span></div>
+  </section>
+
+  <section class="scene dark" id="s4">
+    <div class="pad">
+      <div class="kicker up">Your opponent</div>
+      <div class="h2 up d1" style="margin-top:28px">An AI Agent<br>that learns<br>from every duel.</div>
+    </div>
+    <div id="lvl"><div class="n mono"><small>Lv.</small><span id="lvn">1</span></div></div>
+    <div class="lessons">
+      <div class="lesson" id="l1"><span class="mono">Duel #212 · Defeat</span>Saved Last stand too long. Use it below 40% HP.</div>
+      <div class="lesson" id="l2"><span class="mono">Duel #247 · Victory</span>Water beats Fire. Tap harder in the first 5 seconds.</div>
+      <div class="lesson" id="l3"><span class="mono">Duel #301 · Victory</span>This player rushes early. Hold, then finish.</div>
+    </div>
+  </section>
+
+  <section class="scene" id="s5">
+    <div class="pad">
+      <div class="kicker up">Built for Monad</div>
+      <div class="h2 up d1" style="margin-top:28px">Many duels.<br>In parallel.<br>300 ms blocks.</div>
+    </div>
+    <div id="grid"></div>
+    <div id="tps"><span>onchain tx / sec</span><b class="mono" id="tpsn">0</b></div>
+  </section>
+
+  <section class="scene dark" id="s6">
+    <div class="pad">
+      <div class="kicker up">Live on Monad testnet</div>
+      <div class="h1 up d1" style="margin-top:40px">Monicard</div>
+      <div class="tag up d2">Pull. Tap. Win.</div>
+    </div>
+    <div class="url up d3"><small>Play now</small><span id="url">monicard.xyz</span></div>
+  </section>
+
+</div></div>
+<div id="hint">space / click: replay · ?rec hides this · ?url=your.domain</div>
+<script>
+const $=s=>document.querySelector(s);
+const q=new URLSearchParams(location.search);
+if(q.has('rec'))document.body.classList.add('rec');
+if(q.get('url'))$('#url').textContent=q.get('url');
+function fit(){const s=Math.min(innerWidth/1080,innerHeight/1920);$('#stage').style.transform=`translate(-50%,-50%) scale(${s})`}
+addEventListener('resize',fit);fit();
+
+const fmt=n=>Math.max(0,Math.round(n)).toLocaleString('en-US');
+const hex=()=>'0x'+[...crypto.getRandomValues(new Uint8Array(4))].map(b=>b.toString(16).padStart(2,'0')).join('')+'…';
+let timers=[];
+const at=(ms,fn)=>timers.push(setTimeout(fn,ms));
+const every=(ms,fn)=>timers.push(setInterval(fn,ms));
+function show(id){document.querySelectorAll('.scene').forEach(s=>s.classList.toggle('on',s.id===id))}
+
+function sceneTap(){
+  show('s1');const feed=$('#feed');feed.innerHTML='';let blk=73708414;
+  every(260,()=>{
+    const b=$('#tapbtn');b.classList.remove('hit');void b.offsetWidth;b.classList.add('hit');
+    const r=document.createElement('div');r.className='ring';$('#s1').appendChild(r);setTimeout(()=>r.remove(),700);
+    blk++;const row=document.createElement('div');
+    row.innerHTML=`<span>${hex()}</span><span>block <b>${fmt(blk)}</b></span>`;
+    feed.prepend(row);while(feed.children.length>5)feed.lastChild.remove();
+  });
+}
+function scenePull(){show('s2');$('#cardwrap').classList.remove('flip');at(900,()=>$('#cardwrap').classList.add('flip'))}
+function sceneDuel(){
+  show('s3');let h1=2050,h2=1900,blk=73708500;
+  const upd=()=>{$('#hp1').textContent=fmt(h1);$('#hp2').textContent=fmt(h2);$('#b1').style.width=(h1/2050*100)+'%';$('#b2').style.width=(h2/1900*100)+'%'};
+  $('#victory').classList.remove('show');$('#skill').classList.remove('ready');upd();
+  const ar=$('#arena');ar.innerHTML='';
+  every(150,()=>{
+    if(h2<=0)return;
+    const d=[17,34,51][Math.floor(Math.random()*3)];h2-=d*1.6;
+    const p=document.createElement('div');p.className='pop';p.textContent='−'+d;
+    p.style.left=(60+Math.random()*640)+'px';p.style.top=(200+Math.random()*260)+'px';ar.appendChild(p);setTimeout(()=>p.remove(),800);
+    if(Math.random()<.35)h1-=30+Math.random()*40;
+    blk++;$('#blk').textContent=fmt(blk);$('#ms').textContent=280+Math.floor(Math.random()*90);
+    if(h2<420)$('#skill').classList.add('ready');
+    upd();
+  });
+  at(3300,()=>{h2=0;upd();const st=$('#stage');st.classList.remove('shake');void st.offsetWidth;st.classList.add('shake');
+    const p=document.createElement('div');p.className='pop';p.style.fontSize='120px';p.textContent='−380';p.style.left='240px';p.style.top='260px';ar.appendChild(p)});
+  at(3700,()=>$('#victory').classList.add('show'));
+}
+function sceneAgent(){
+  show('s4');['#l1','#l2','#l3'].forEach(s=>$(s).classList.remove('show'));$('#lvn').textContent='1';
+  [[700,'2','#l1'],[1400,'3','#l2'],[2100,'4','#l3']].forEach(([t,l,s])=>at(t,()=>{$('#lvn').textContent=l;$(s).classList.add('show')}));
+}
+function sceneSwarm(){
+  show('s5');const g=$('#grid');g.innerHTML='';const duels=[];
+  for(let i=0;i<20;i++){const m=document.createElement('div');m.className='mini';
+    m.innerHTML=`<span class="mono">#${fmt(312+i)}</span><div class="b a"><i style="width:100%"></i></div><div class="b z"><i style="width:100%"></i></div>`;
+    g.appendChild(m);duels.push({a:100,z:100,el:m})}
+  let tps=0;
+  every(300,()=>{duels.forEach(d=>{d.a=Math.max(0,d.a-Math.random()*9);d.z=Math.max(0,d.z-Math.random()*11);
+    if(d.a<=0||d.z<=0){d.a=100;d.z=100}
+    d.el.querySelector('.a i').style.width=d.a+'%';d.el.querySelector('.z i').style.width=d.z+'%'});
+    tps=Math.min(148,tps+22+Math.random()*10);$('#tpsn').textContent=fmt(tps)});
+}
+function sceneEnd(){show('s6')}
+
+const SEQ=[[0,sceneTap],[3200,scenePull],[7000,sceneDuel],[11800,sceneAgent],[14800,sceneSwarm],[17800,sceneEnd]];
+const only=q.has('scene')?Number(q.get('scene'))-1:null;
+function play(){
+  timers.forEach(t=>{clearTimeout(t);clearInterval(t)});timers=[];
+  if(only!==null){SEQ[only][1]();return}
+  let clears=[];
+  SEQ.forEach(([t,fn])=>{timers.push(setTimeout(()=>{
+    // stop intervals from the previous scene
+    clears.forEach(c=>clearInterval(c));const before=timers.length;fn();clears=timers.slice(before);
+  },t))});
+  timers.push(setTimeout(play,22000));
+}
+addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();play()}});
+addEventListener('click',play);
+document.fonts.ready.then(play);
+</script>
+</body>
+</html>
