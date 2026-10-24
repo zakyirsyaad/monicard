@@ -24,7 +24,7 @@ export function HpBar({ side, name, hp, maxHp, pendingDamage, size = 'md' }: HpB
   const chainPct = toPct(hp);
   const fillColor = side === 'self' ? 'bg-purple' : 'bg-berry';
   const numberColor = side === 'self' ? 'text-ink' : 'text-berry';
-  const numberClass = size === 'lg' ? 'display' : 'data-lg';
+  const numberClass = size === 'lg' ? 'display font-mono tabular-nums' : 'data-lg';
   const trackHeight = size === 'lg' ? 'h-5' : 'h-3';
 
   return (

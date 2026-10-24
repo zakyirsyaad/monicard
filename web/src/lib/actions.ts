@@ -161,10 +161,10 @@ export async function sendCall(deps: ActionDeps, call: CallParams): Promise<Rela
   } catch (failure) {
     if (!(failure instanceof RelayFailure)) throw failure;
     const err = failure.cause;
-    if (failure.timedOut && err instanceof TimeoutError && isUnsafeToRepeat(call)) {
-      throw new MaybeLandedError(call.fn);
-    }
-    if (!(err instanceof ApiError) || !NONCE_ERROR.test(err.reason)) throw err;
+    const isNonceError = err instanceof ApiError && NONCE_ERROR.test(err.reason);
+    // After a timeout the first send may have landed: any other failure must not invite a repeat of an unsafe call.
+    if (failure.timedOut && !isNonceError && isUnsafeToRepeat(call)) throw new MaybeLandedError(call.fn);
+    if (!isNonceError) throw err;
     if (failure.timedOut) {
       const { nonce } = await api.getAccount(account.address);
       if (nonce > first.nonce) throw new MaybeLandedError(call.fn);

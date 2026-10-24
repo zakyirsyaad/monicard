@@ -19,7 +19,7 @@ import {
   paidPull,
   sendCall,
 } from '../src/lib/actions';
-import { ApiError, TimeoutError } from '../src/lib/api';
+import { ApiError, NetworkError, TimeoutError } from '../src/lib/api';
 import type { Account, Api, Config, FundResult, RelayResult } from '../src/lib/types';
 
 const CARDS = '0x1111111111111111111111111111111111111111' as const;
@@ -178,6 +178,33 @@ describe('sendCall', () => {
     expect(err).toBeInstanceOf(MaybeLandedError);
     expect((err as MaybeLandedError).fn).toBe(fn);
     expect(relay).toHaveBeenCalledTimes(4);
+  });
+
+  it('throws MaybeLandedError when a paidPull resend fails with a network error after a timeout', async () => {
+    const relay = vi
+      .fn<Api['relay']>()
+      .mockRejectedValueOnce(new TimeoutError(5000))
+      .mockRejectedValueOnce(new NetworkError('offline'));
+    const paid = { ...call, fn: 'paidPull', value: 50_000_000_000_000_000n };
+    const err = await sendCall(deps(makeApi({ relay })), paid).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MaybeLandedError);
+  });
+
+  it('throws MaybeLandedError when a createDuel resend is refused by the server after a timeout', async () => {
+    const relay = vi
+      .fn<Api['relay']>()
+      .mockRejectedValueOnce(new TimeoutError(5000))
+      .mockRejectedValueOnce(new ApiError(429, 'budget'));
+    const err = await sendCall(deps(makeApi({ relay })), { ...call, fn: 'createDuel' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MaybeLandedError);
+  });
+
+  it('still rethrows a network error after a timeout for a safe call (freePull)', async () => {
+    const relay = vi
+      .fn<Api['relay']>()
+      .mockRejectedValueOnce(new TimeoutError(5000))
+      .mockRejectedValueOnce(new NetworkError('offline'));
+    await expect(sendCall(deps(makeApi({ relay })), call)).rejects.toBeInstanceOf(NetworkError);
   });
 
   it('refetches the nonce and retries once on a nonce error', async () => {
