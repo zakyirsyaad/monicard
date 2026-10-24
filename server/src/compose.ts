@@ -127,9 +127,11 @@ function mountSpa(app: Hono, webDist: string, log: (line: string) => void): void
 }
 
 /**
- * Seams for later routes, mounted before the SPA fallback:
- *   app.route('/', agentRoutes(...))   // /agent
- *   app.route('/', adminRoutes(...))   // /admin
+ * Seams for later routes. Mount them here, before the SPA fallback, so their paths 404 as JSON:
+ *   import { agentRoutes } from './agent/routes';   // /agent, server/src/agent/routes.ts
+ *   import { adminRoutes } from './adminRoutes';    // /admin, server/src/adminRoutes.ts
+ *   app.route('/', agentRoutes(...));
+ *   app.route('/', adminRoutes(...));
  */
 function mountLaterRoutes(_app: Hono): void {
   // intentionally empty

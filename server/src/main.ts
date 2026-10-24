@@ -5,7 +5,7 @@ import { nadCardsAbi } from '@nad/shared';
 import { privateKeyToAccount } from 'viem/accounts';
 import { createAccountReader } from './account';
 import { createChain } from './chain';
-import { composeApp, createThrottledLogger, type Running } from './compose';
+import { composeApp, createThrottledLogger, describeError, type Running } from './compose';
 import { env } from './env';
 import { createWalletQueue } from './walletQueue';
 
@@ -76,6 +76,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error('[server] fatal:', error instanceof Error ? error.message : String(error));
+  // describeError keeps viem's RPC URL out of the fatal line.
+  console.error('[server] fatal:', describeError(error));
   process.exit(1);
 });

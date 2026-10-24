@@ -165,7 +165,7 @@ describe('composeApp SPA fallback', () => {
 
   test('unknown non-API paths return index.html when web/dist exists', async () => {
     const { app } = composeApp(makeDeps());
-    for (const path of ['/duel/5', '/play']) {
+    for (const path of ['/duel/5', '/play', '/pull', '/arena', '/dev']) {
       const res = await app.request(path);
       expect(res.status, path).toBe(200);
       expect(await res.text(), path).toBe(INDEX_HTML);
@@ -204,16 +204,27 @@ describe('composeApp start', () => {
     const watcher = { latestBlock: () => 0n, lag: () => 0n, stop: vi.fn() };
     const poller = { stop: vi.fn() } as unknown as ReturnType<ComposeLoops['startPoller']>;
     const ws = { broadcast: vi.fn(), onConnect: vi.fn(), subscribedIds: () => new Set<string>(), close: vi.fn() };
+    let watcherArgs: Parameters<ComposeLoops['startBlockWatcher']> | undefined;
     let pollerDeps: PollerDeps | undefined;
     const loops: ComposeLoops = {
       createWsHub: vi.fn(() => ws),
-      startBlockWatcher: vi.fn(() => watcher),
+      startBlockWatcher: vi.fn((...args: Parameters<ComposeLoops['startBlockWatcher']>) => {
+        watcherArgs = args;
+        return watcher;
+      }),
       startPoller: vi.fn((d: PollerDeps) => {
         pollerDeps = d;
         return poller;
       }),
     };
-    return { loops, watcher, poller, ws, getPollerDeps: () => pollerDeps! };
+    return {
+      loops,
+      watcher,
+      poller,
+      ws,
+      getWatcherArgs: () => watcherArgs!,
+      getPollerDeps: () => pollerDeps!,
+    };
   }
 
   const fakeServer = () => ({ close: vi.fn((cb?: (err?: Error) => void) => cb?.()) }) as unknown as Server;
@@ -227,12 +238,30 @@ describe('composeApp start', () => {
     const pd = f.getPollerDeps();
     expect(pd.getAgentMessage).toBe(composed.getAgentMessage);
     expect(pd.getAgentMessage()).toBeNull();
+    expect(pd.chain).toBe(deps.chain);
+    expect(pd.hub).toBe(composed.hub);
+    expect(pd.stats).toBe(composed.stats);
     expect(pd.operator).toBe(deps.operatorQueue);
     expect(pd.settleGas).toBe(BigInt(GAS_LIMITS.settle));
     expect(pd.arena).toBe(ARENA);
     expect(pd.cards).toBe(CARDS);
     expect(pd.bots()).toEqual([BOT]);
     expect(pd.ws).toBe(f.ws);
+  });
+
+  test('start wires the block watcher to the receipt hub and logs its errors', () => {
+    const f = fakeLoops();
+    const log = vi.fn();
+    const deps = makeDeps({ log });
+    const composed = composeApp(deps);
+    const server = fakeServer();
+    composed.start(server, f.loops);
+    expect(f.loops.createWsHub).toHaveBeenCalledWith(server);
+    const [chainArg, hubArg, opts] = f.getWatcherArgs();
+    expect(chainArg).toBe(deps.chain);
+    expect(hubArg).toBe(composed.hub);
+    expect(() => opts.onError(new Error('rpc exploded'))).not.toThrow();
+    expect(log.mock.calls.flat().join(' ')).toContain('rpc exploded');
   });
 
   test('stop shuts down watcher, poller, ws and the http server', async () => {
@@ -262,6 +291,9 @@ describe('composeApp start', () => {
     const log = vi.fn();
     composeApp(makeDeps({ log })).start(fakeServer(), f.loops);
     const text = log.mock.calls.flat().join('\n');
+    expect(text).toContain('18080');
+    expect(text).toContain('testnet');
+    expect(text).toContain('10143');
     expect(text).toContain('watcher');
     expect(text).toContain('poller');
     expect(text).toContain('fund disabled');
