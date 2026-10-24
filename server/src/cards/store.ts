@@ -8,6 +8,16 @@ export type CardStore = {
 };
 
 const FILE_NAME = 'cards.json';
+const CORRUPT_SUFFIX = '.corrupt';
+
+/** Moves an unreadable file aside so the next write cannot destroy it. */
+function quarantine(file: string): void {
+  try {
+    renameSync(file, `${file}${CORRUPT_SUFFIX}`);
+  } catch (err) {
+    console.warn(`[cards] could not rename ${file} to ${file}${CORRUPT_SUFFIX}:`, err);
+  }
+}
 
 function isLore(value: unknown): value is Lore {
   if (typeof value !== 'object' || value === null) return false;
@@ -32,7 +42,8 @@ function loadEntries(file: string): Map<number, Lore> {
       if (isLore(value)) entries.set(Number(key), value);
     }
   } catch (err) {
-    console.warn(`[cards] could not read ${file}, starting with an empty store:`, err);
+    console.warn(`[cards] could not read ${file}, keeping it as ${file}${CORRUPT_SUFFIX} and starting empty:`, err);
+    quarantine(file);
     entries.clear();
   }
   return entries;
@@ -44,17 +55,17 @@ export function createCardStore(dataDir: string): CardStore {
   const file = join(dataDir, FILE_NAME);
   const entries = loadEntries(file);
 
-  const persist = (): void => {
+  const persist = (next: ReadonlyMap<number, Lore>): void => {
     const tmp = `${file}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(Object.fromEntries(entries)), 'utf8');
+    writeFileSync(tmp, JSON.stringify(Object.fromEntries(next)), 'utf8');
     renameSync(tmp, file);
   };
 
   return {
     get: (id) => entries.get(id),
     set: (id, lore) => {
+      persist(new Map(entries).set(id, lore));
       entries.set(id, lore);
-      persist();
     },
   };
 }

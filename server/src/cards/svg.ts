@@ -95,8 +95,18 @@ const XML_ESCAPES: Record<string, string> = {
   "'": '&apos;',
 };
 
+/** XML 1.0 `Char` production: tab, LF, CR, and everything except controls, lone surrogates and U+FFFE/F. */
+const isXmlChar = (cp: number): boolean =>
+  cp === 0x9 || cp === 0xa || cp === 0xd || (cp >= 0x20 && cp <= 0xd7ff) || (cp >= 0xe000 && cp <= 0xfffd) || (cp >= 0x10000 && cp <= 0x10ffff);
+
+/** Drops characters XML 1.0 cannot represent, then escapes the five specials. */
 export function escapeXml(s: string): string {
-  return s.replace(/[&<>"']/g, (ch) => XML_ESCAPES[ch] ?? ch);
+  let out = '';
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if (isXmlChar(cp)) out += XML_ESCAPES[ch] ?? ch;
+  }
+  return out;
 }
 
 // ----------------------------------------------------------------- nadmon
@@ -249,7 +259,7 @@ function matchupRow(card: CardData, p: Palette): string {
     `<line x1="${GUTTER}" y1="390" x2="${CARD_WIDTH - GUTTER}" y2="390" stroke="${p.line}" stroke-width="1"/>`,
     column(INNER_LEFT, 'Strong vs', ELEMENTS[strongAgainst(card.element)], p),
     column(112, 'Weak to', ELEMENTS[weakTo(card.element)], p),
-    column(204, 'Record', `${card.wins} W · ${card.losses} L`, p),
+    column(204, 'Record', `${num(card.wins)} W · ${num(card.losses)} L`, p),
   ].join('');
 }
 
@@ -283,7 +293,7 @@ export function cardSvg(card: CardData, lore: Lore, status: 'ready' | 'forging' 
   const from = species.evolvesFrom ? (NADMON.find((n) => n.id === species.evolvesFrom)?.name ?? null) : null;
   const body = [
     frame(p),
-    header(card, lore.name, species.stage, p),
+    header(card, species.name, species.stage, p),
     chips(card, p),
     imageWindow(species.id, p),
     text(CARD_WIDTH / 2, 278, metaLine(card, from), { size: 10, fill: p.inkMuted, anchor: 'middle' }),
@@ -294,6 +304,6 @@ export function cardSvg(card: CardData, lore: Lore, status: 'ready' | 'forging' 
   ];
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" viewBox="0 0 ${CARD_WIDTH} ${CARD_HEIGHT}">` +
-    `<title>${escapeXml(lore.name)}</title>${body.join('')}</svg>`
+    `<title>${escapeXml(species.name)}</title>${body.join('')}</svg>`
   );
 }

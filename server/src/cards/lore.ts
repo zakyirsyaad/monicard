@@ -1,4 +1,6 @@
-import { nadmonFor } from '@nad/shared';
+import { ELEMENTS, RARITIES, nadmonFor } from '@nad/shared';
+import { z } from 'zod';
+import { sanitizeText, withTimeout, type Llm } from '../llm';
 
 /** On-chain card stats; `mintedAt` is the mint block number. */
 export type CardData = {
@@ -86,4 +88,52 @@ export function fallbackLore(card: CardData): Lore {
   const lore = pool.lore[pickIndex(id * LORE_STRIDE + Math.floor(id / LORE_BLOCK), pool.lore.length)];
   if (title === undefined || lore === undefined) throw new Error('Empty lore pool');
   return { name: nadmonFor(card.element, card.rarity).name, title, lore, source: 'template' };
+}
+
+const DEFAULT_LORE_TIMEOUT_MS = 4000;
+const MAX_TITLE_CHARS = 40;
+const MAX_LORE_CHARS = 170;
+const BANNED_WORDS = /\b(?:bets?|betting|wagers?|wagering|gambl\w*)\b/i;
+
+const loreReply = z.object({ title: z.string().max(MAX_TITLE_CHARS), lore: z.string().max(MAX_LORE_CHARS) });
+
+const LORE_SYSTEM =
+  'You write short collectible-card flavor text for Nadmon, small elemental creatures in a tap-duel card game. ' +
+  'Reply with JSON only: {"title": string, "lore": string}. ' +
+  `Write in English with a relaxed, confident tone. "title" is an epithet of at most ${MAX_TITLE_CHARS} characters. ` +
+  `"lore" is one or two sentences of at most ${MAX_LORE_CHARS} characters. ` +
+  'Never use the words bet, wager or gamble. No emoji, no real people, no real brands.';
+
+function lorePrompt(card: CardData, name: string): string {
+  return [
+    `Nadmon: ${name}`,
+    `Element: ${ELEMENTS[card.element]}`,
+    `Rarity: ${RARITIES[card.rarity]}`,
+    `ATK: ${card.atk}`,
+    `HP: ${card.hp}`,
+  ].join('\n');
+}
+
+/** Cleaned `{title, lore}` from an LLM reply, or null when nothing usable is left. */
+function cleanReply(reply: z.infer<typeof loreReply>): { title: string; lore: string } | null {
+  const title = sanitizeText(reply.title);
+  const lore = sanitizeText(reply.lore);
+  if (title === '' || lore === '' || BANNED_WORDS.test(`${title} ${lore}`)) return null;
+  return { title, lore };
+}
+
+/**
+ * AI lore for a freshly minted card. Never throws for LLM trouble: no LLM, timeout, HTTP error,
+ * invalid JSON, over-long or unusable text all give the deterministic template. `name` is always the species.
+ */
+export async function forgeLore(card: CardData, llm: Llm | null, timeoutMs = DEFAULT_LORE_TIMEOUT_MS): Promise<Lore> {
+  const template = fallbackLore(card);
+  if (!llm) return template;
+  try {
+    const reply = await withTimeout(llm.json(LORE_SYSTEM, lorePrompt(card, template.name), loreReply, timeoutMs), timeoutMs);
+    const cleaned = cleanReply(reply);
+    return cleaned ? { name: template.name, ...cleaned, source: 'ai' } : template;
+  } catch {
+    return template;
+  }
 }
