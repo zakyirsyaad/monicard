@@ -80,6 +80,7 @@ echo "==> rsync to $VPS_HOST:~/$VPS_DIR"
 RSYNC_EXCLUDES=(
   --exclude='node_modules'
   --exclude='/data'
+  --exclude='/data-mainnet'
   --exclude='.env'
   --exclude='/contracts/out'
   --exclude='/contracts/cache'
