@@ -1,6 +1,8 @@
-# NadGacha: BlitzArena
+# Monicard
 
-A real-time 1v1 trading-card duel on Monad: pull a free onchain card, then fight a 20-second duel where **every batch of taps is a transaction**. Duel a friend on two phones, or fight the **AI Agent**, an NPC with its own wallet that learns from every duel.
+**Real-time onchain TCG duels on Monad. Every tap is a transaction.**
+
+Monicard is a real-time 1v1 trading-card duel on Monad: pull a free onchain card, then fight a 20-second duel where **every batch of taps is a transaction**. Duel a friend on two phones, or fight the **AI Agent**, an NPC with its own wallet that learns from every duel.
 
 Built in one day at **Monad Blitz Jogja Vol. 2** (24 October 2026).
 
@@ -24,8 +26,8 @@ To play a friend instead, pick **Challenge a friend** and let them scan the QR c
 
 | Contract | Monad Testnet (10143) | Monad Mainnet (143) |
 |---|---|---|
-| `NadCards` (ERC-721 + ERC-2981) | _TODO_ ([MonadScan](https://testnet.monadscan.com/address/TODO)) | _TODO_ ([MonadScan](https://monadscan.com/address/TODO)) |
-| `BlitzArena` (parallel duels) | _TODO_ ([MonadScan](https://testnet.monadscan.com/address/TODO)) | _TODO_ ([MonadScan](https://monadscan.com/address/TODO)) |
+| `NadCards` (ERC-721 + ERC-2981) | [`0x7AF33CB3823Ff99D37411A678452A7980d14CF9F`](https://testnet.monadscan.com/address/0x7AF33CB3823Ff99D37411A678452A7980d14CF9F#code) | _TODO_ ([MonadScan](https://monadscan.com/address/TODO)) |
+| `BlitzArena` (parallel duels) | [`0xc08c323df6a5f9fAbaF75A6060E4CA357F2251f9`](https://testnet.monadscan.com/address/0xc08c323df6a5f9fAbaF75A6060E4CA357F2251f9#code) | _TODO_ ([MonadScan](https://monadscan.com/address/TODO)) |
 
 Source is verified on MonadScan for every address above. The app runs on testnet; the mainnet deployment is the same bytecode.
 
