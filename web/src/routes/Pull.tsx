@@ -67,6 +67,7 @@ export function Pull() {
             {RARITY_NAMES[card.rarity]}
           </p>
           <p className="data text-ink-muted">Rolled in block {formatBlock(card.mintedAt)}</p>
+          <p className="label text-ink-muted">5% creator royalty on resale</p>
         </section>
       )}
       <div className="mt-auto flex flex-col gap-3">

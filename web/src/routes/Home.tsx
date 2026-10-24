@@ -67,6 +67,7 @@ function OddsTable() {
         </tbody>
       </table>
       <p className="label text-ink-muted">Rolled onchain</p>
+      <p className="body text-ink-muted">Every card pays a 5% creator royalty on resale (ERC-2981).</p>
     </section>
   );
 }
