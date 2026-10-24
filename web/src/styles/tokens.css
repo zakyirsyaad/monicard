@@ -1,0 +1,67 @@
+/* NadGacha Design System — generated from tokens.json */
+:root, [data-theme="light"] {
+  --surface: #fbfaf9;
+  --surface-raised: #ffffff;
+  --surface-sunken: #efeef2;
+  --line: #e3e0ea;
+  --ink: #0e100f;
+  --ink-muted: #5c5a66;
+  --purple: #6e54ff;
+  --on-purple: #ffffff;
+  --purple-ink: #5235f0;
+  --purple-tint: #f1efff;
+  --deep: #200052;
+  --on-deep: #fbfaf9;
+  --berry: #a0055d;
+  --berry-tint: #fbe8f2;
+  --element-fire: #b8400b;
+  --element-water: #0b64be;
+  --element-lightning: #7a5c00;
+  --rarity-common: #84808e;
+  --rarity-rare: #0e7c66;
+  --rarity-epic: var(--deep);
+  --rarity-legendary: #a8741a;
+  --focus: var(--deep);
+}
+[data-theme="dark"] {
+  --surface: #0e100f;
+  --surface-raised: #18191c;
+  --surface-sunken: #232327;
+  --line: #2e2c36;
+  --ink: #fbfaf9;
+  --ink-muted: #a9a6b4;
+  --purple: #836ef9;
+  --on-purple: #0e100f;
+  --purple-ink: #b9adff;
+  --purple-tint: #262049;
+  --deep: #e4dfff;
+  --on-deep: #200052;
+  --berry: #ff7ab8;
+  --berry-tint: #3a1229;
+  --element-fire: #ff9a5c;
+  --element-water: #6cb8ff;
+  --element-lightning: #f2cc4d;
+  --rarity-common: #77738a;
+  --rarity-rare: #4fd1b5;
+  --rarity-legendary: #f0c060;
+}
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 28px;
+  --font-sans: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+.display-tap { font-family: var(--font-sans); font-size: 40px; line-height: 44px; font-weight: 800; letter-spacing: -0.02em; }
+.display { font-family: var(--font-sans); font-size: 28px; line-height: 32px; font-weight: 700; letter-spacing: -0.01em; }
+.title { font-family: var(--font-sans); font-size: 18px; line-height: 24px; font-weight: 600; }
+.body { font-family: var(--font-sans); font-size: 15px; line-height: 22px; font-weight: 400; }
+.label { font-family: var(--font-sans); font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.data-lg { font-family: var(--font-mono); font-size: 22px; line-height: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.data { font-family: var(--font-mono); font-size: 13px; line-height: 18px; font-weight: 500; font-variant-numeric: tabular-nums; }
