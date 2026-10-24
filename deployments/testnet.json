@@ -14,7 +14,7 @@
     "claim": 154000,
     "createMatch": 211000,
     "joinMatch": 102000,
-    "act": 102000,
+    "act": 116000,
     "claimTimeout": 55000
   },
   "stakeVault": "0x642C1364b62344128087549ceeD9268D5E3385df",
