@@ -51,6 +51,8 @@ export type ComposeConfig = {
   stakeVault?: Hex;
   /** CardBattle address; absent until the battle deployment exists. */
   battle?: Hex;
+  /** BattleStakeVault address; absent on deployments without one. */
+  battleStakeVault?: Hex;
   gasLimits: GasLimits;
   batchMs: number;
   event: EventInfo;
@@ -193,6 +195,7 @@ export function composeApp(deps: ComposeDeps): Composed {
     arena: config.arena,
     stakeVault: config.stakeVault,
     battle: config.battle,
+    battleStakeVault: config.battleStakeVault,
     gasLimits,
     batchMs: config.batchMs,
     pullPrice: deps.pullPrice,
@@ -215,6 +218,7 @@ export function composeApp(deps: ComposeDeps): Composed {
         arena: config.arena,
         stakeVault: config.stakeVault,
         battle: config.battle,
+        battleStakeVault: config.battleStakeVault,
         gasLimits,
         pullPrice: deps.pullPrice,
       },

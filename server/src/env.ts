@@ -59,6 +59,11 @@ const deploymentSchema = z.object({
     .refine((value) => BigInt(value) !== 0n, 'must not be the zero address')
     .optional(),
   battle: z.string().regex(/^0x[0-9a-fA-F]{40}$/).optional(),
+  battleStakeVault: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .refine((value) => BigInt(value) !== 0n, 'must not be the zero address')
+    .optional(),
   deployBlock: z.number().int().nonnegative().optional(),
   gasLimits: z.object({
     freePull: z.number().int().positive(),
@@ -73,6 +78,8 @@ const deploymentSchema = z.object({
     joinMatch: z.number().int().positive().optional(),
     act: z.number().int().positive().optional(),
     claimTimeout: z.number().int().positive().optional(),
+    battleStake: z.number().int().positive().optional(),
+    battleClaim: z.number().int().positive().optional(),
   }),
 });
 
@@ -110,6 +117,7 @@ export type Env = {
   arena: Hex;
   stakeVault?: Hex;
   battle?: Hex;
+  battleStakeVault?: Hex;
   gasLimits: GasLimits;
 };
 
@@ -160,6 +168,7 @@ function buildEnv(): Env {
     arena: deployment.arena as Hex,
     stakeVault: deployment.stakeVault as Hex | undefined,
     battle: deployment.battle as Hex | undefined,
+    battleStakeVault: deployment.battleStakeVault as Hex | undefined,
     gasLimits: deployment.gasLimits,
   };
 }

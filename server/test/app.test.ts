@@ -81,6 +81,25 @@ describe('GET /config', () => {
     });
   });
 
+  test('exposes the BattleStakeVault and its gas limits when configured, omits it otherwise', async () => {
+    const app = buildApp(
+      deps({
+        battleStakeVault: VAULT,
+        gasLimits: { ...deps().gasLimits, battleStake: 200_000, battleClaim: 180_000 },
+      }),
+    );
+    const body = (await (await app.request('/config')).json()) as {
+      contracts: Record<string, string>;
+      gasLimits: Record<string, number>;
+    };
+    expect(body.contracts).toEqual({ cards: CARDS, arena: ARENA, battleStakeVault: VAULT });
+    expect(body.gasLimits.battleStake).toBe(200_000);
+    expect(body.gasLimits.battleClaim).toBe(180_000);
+
+    const bare = (await (await buildApp(deps()).request('/config')).json()) as { contracts: Record<string, string> };
+    expect(bare.contracts.battleStakeVault).toBeUndefined();
+  });
+
   test('exposes the StakeVault and its gas limits when configured', async () => {
     const app = buildApp(
       deps({

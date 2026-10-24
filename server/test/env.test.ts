@@ -31,6 +31,18 @@ describe('parseDeployment', () => {
     expect(parseDeployment({ ...base, stakeVault: VAULT }).stakeVault).toBe(VAULT);
   });
 
+  test('keeps battleStakeVault and its gas limits optional', () => {
+    expect(parseDeployment(base).battleStakeVault).toBeUndefined();
+    const parsed = parseDeployment({ ...base, battleStakeVault: VAULT, gasLimits: { ...GAS, battleStake: 200_000, battleClaim: 180_000 } });
+    expect(parsed.battleStakeVault).toBe(VAULT);
+    expect(parsed.gasLimits.battleStake).toBe(200_000);
+    expect(parsed.gasLimits.battleClaim).toBe(180_000);
+  });
+
+  test('rejects the zero battleStakeVault address', () => {
+    expect(() => parseDeployment({ ...base, battleStakeVault: ZERO })).toThrow(/zero address/i);
+  });
+
   test('rejects the zero stakeVault address', () => {
     expect(() => parseDeployment({ ...base, stakeVault: ZERO })).toThrow(/zero address/i);
   });

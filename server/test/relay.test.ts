@@ -1,4 +1,4 @@
-import { blitzArenaAbi, nadCardsAbi, stakeVaultAbi } from '@nad/shared';
+import { battleStakeVaultAbi, blitzArenaAbi, nadCardsAbi, stakeVaultAbi } from '@nad/shared';
 import {
   encodeAbiParameters,
   encodeEventTopics,
@@ -269,6 +269,77 @@ describe('validateRawTx with StakeVault', () => {
     expect(validateRawTx(await signTx(), VAULT_CFG)).toMatchObject({ ok: true, fn: 'attack' });
     expect(validateRawTx(await signTx({ to: CARDS, data: paidPullData, value: PULL_PRICE, gas: 150_000n }), VAULT_CFG)).toMatchObject({ ok: true, fn: 'paidPull' });
     expect(validateRawTx(await signTx({ value: 1n }), VAULT_CFG)).toEqual({ ok: false, reason: 'value' });
+  });
+});
+
+describe('validateRawTx with BattleStakeVault', () => {
+  const TAP_VAULT: Hex = '0x642C1364b62344128087549ceeD9268D5E3385df';
+  const BATTLE_VAULT: Hex = '0xF33d88f0D06bf16EA254f0067c272Fa328125E9e';
+  const BATTLE_CFG = {
+    ...CFG,
+    stakeVault: TAP_VAULT,
+    battleStakeVault: BATTLE_VAULT,
+    gasLimits: { ...GAS_LIMITS, stake: 131_000, claim: 154_000, battleStake: 200_000, battleClaim: 180_000 },
+  };
+  const stakeData = encodeFunctionData({ abi: battleStakeVaultAbi, functionName: 'stake', args: [1n] });
+  const claimData = encodeFunctionData({ abi: battleStakeVaultAbi, functionName: 'claim', args: [1n] });
+  const stakeTx = (o: TxOverrides = {}) => signTx({ to: BATTLE_VAULT, data: stakeData, value: parseEther('0.05'), gas: 200_000n, ...o });
+  const claimTx = (o: TxOverrides = {}) => signTx({ to: BATTLE_VAULT, data: claimData, value: 0n, gas: 180_000n, ...o });
+
+  test.each(['0.001', '0.05', '1'])('accepts stake with value %s MON', async (mon) => {
+    const raw = await stakeTx({ value: parseEther(mon) });
+    expect(validateRawTx(raw, BATTLE_CFG)).toMatchObject({ ok: true, fn: 'stake', value: parseEther(mon), hash: keccak256(raw) });
+  });
+
+  test.each([['0', 0n], ['0.0009', parseEther('0.0009')], ['1.0001', parseEther('1.0001')]])(
+    'rejects stake with value %s MON',
+    async (_label, value) => {
+      expect(validateRawTx(await stakeTx({ value }), BATTLE_CFG)).toEqual({ ok: false, reason: 'value' });
+    },
+  );
+
+  test('accepts claim with zero value and rejects claim with value', async () => {
+    expect(validateRawTx(await claimTx(), BATTLE_CFG)).toMatchObject({ ok: true, fn: 'claim', value: 0n });
+    expect(validateRawTx(await claimTx({ value: 1n }), BATTLE_CFG)).toEqual({ ok: false, reason: 'value' });
+  });
+
+  test('uses battleStake / battleClaim as gas limits, not the Tap vault limits', async () => {
+    expect(validateRawTx(await stakeTx({ gas: 200_000n }), BATTLE_CFG)).toMatchObject({ ok: true });
+    expect(validateRawTx(await stakeTx({ gas: 200_001n }), BATTLE_CFG)).toEqual({ ok: false, reason: 'gas' });
+    expect(validateRawTx(await claimTx({ gas: 180_000n }), BATTLE_CFG)).toMatchObject({ ok: true });
+    expect(validateRawTx(await claimTx({ gas: 180_001n }), BATTLE_CFG)).toEqual({ ok: false, reason: 'gas' });
+  });
+
+  test('rejects a battle vault tx with gas when its limit is missing from config', async () => {
+    const cfg = { ...BATTLE_CFG, gasLimits: { ...GAS_LIMITS, stake: 131_000, claim: 154_000 } };
+    expect(validateRawTx(await stakeTx(), cfg)).toEqual({ ok: false, reason: 'gas' });
+  });
+
+  test('rejects with reason to when cfg.battleStakeVault is unset', async () => {
+    const { battleStakeVault: _unused, ...cfg } = BATTLE_CFG;
+    expect(validateRawTx(await stakeTx(), cfg)).toEqual({ ok: false, reason: 'to' });
+  });
+
+  test('matches the address case-insensitively', async () => {
+    const cfg = { ...BATTLE_CFG, battleStakeVault: BATTLE_VAULT.toLowerCase() as Hex };
+    expect(validateRawTx(await stakeTx(), cfg)).toMatchObject({ ok: true, fn: 'stake' });
+  });
+
+  test.each([
+    ['withdrawRake', [account.address]],
+    ['transferOwnership', [account.address]],
+    ['renounceOwnership', []],
+  ] as const)('rejects owner function %s with reason selector', async (functionName, args) => {
+    const data = encodeFunctionData({ abi: battleStakeVaultAbi, functionName, args } as never);
+    expect(validateRawTx(await signTx({ to: BATTLE_VAULT, data, gas: 100_000n }), BATTLE_CFG)).toEqual({ ok: false, reason: 'selector' });
+  });
+
+  test('the Tap vault keeps its own limits and address when both vaults are configured', async () => {
+    const tapStake = encodeFunctionData({ abi: stakeVaultAbi, functionName: 'stake', args: [1n] });
+    const raw = await signTx({ to: TAP_VAULT, data: tapStake, value: parseEther('0.5'), gas: 131_000n });
+    expect(validateRawTx(raw, BATTLE_CFG)).toMatchObject({ ok: true, fn: 'stake' });
+    const over = await signTx({ to: TAP_VAULT, data: tapStake, value: parseEther('0.5'), gas: 131_001n });
+    expect(validateRawTx(over, BATTLE_CFG)).toEqual({ ok: false, reason: 'gas' });
   });
 });
 

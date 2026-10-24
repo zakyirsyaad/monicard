@@ -1,4 +1,4 @@
-import { blitzArenaAbi, nadCardsAbi, stakeVaultAbi, type Hex } from '@nad/shared';
+import { battleStakeVaultAbi, blitzArenaAbi, nadCardsAbi, stakeVaultAbi, type Hex } from '@nad/shared';
 import { battleAbi } from './battleAbi';
 import {
   decodeFunctionData,
@@ -41,6 +41,8 @@ export type RelayConfig = {
   stakeVault?: Hex;
   /** CardBattle address; battle txs are only relayed when set. */
   battle?: Hex;
+  /** BattleStakeVault address; its stake/claim txs are only relayed when set. */
+  battleStakeVault?: Hex;
   gasLimits: Record<string, number>;
   pullPrice: bigint;
 };
@@ -73,22 +75,31 @@ export function validateRawTx(raw: Hex, cfg: RelayConfig): Validation {
   if (!fn) return reject('selector');
   const value = tx.value ?? 0n;
   if (!isValueAllowed(fn, value, cfg)) return reject('value');
-  const limit = cfg.gasLimits[fn];
+  const limit = cfg.gasLimits[gasLimitKey(target, fn)];
   if (limit === undefined || gas > BigInt(limit)) return reject('gas');
   return { ok: true, hash: keccak256(raw), fn, gas, maxFeePerGas, value };
 }
 
-type Target = 'cards' | 'arena' | 'vault' | 'battle';
+type Target = 'cards' | 'arena' | 'vault' | 'battle' | 'battleVault';
 
-const TARGET_ABIS = { cards: nadCardsAbi, arena: blitzArenaAbi, vault: stakeVaultAbi, battle: battleAbi } as const;
+const TARGET_ABIS = { cards: nadCardsAbi, arena: blitzArenaAbi, vault: stakeVaultAbi,
+  battle: battleAbi,
+  battleVault: battleStakeVaultAbi,
+} as const;
 const TARGET_FNS: Record<Target, readonly string[]> = {
   cards: CARDS_FNS,
   arena: ARENA_FNS,
   vault: VAULT_FNS,
   battle: BATTLE_FNS,
+  battleVault: VAULT_FNS,
 };
 
-/** Which of our contracts `to` is (case-insensitive); vault/battle only count when configured. */
+/** `stake`/`claim` exist on both vaults, so the Card Battle vault's limits are `battleStake`/`battleClaim`. */
+function gasLimitKey(target: Target, fn: string): string {
+  return target === 'battleVault' ? `battle${fn.charAt(0).toUpperCase()}${fn.slice(1)}` : fn;
+}
+
+/** Which of our contracts `to` is (case-insensitive); vaults/battle only count when configured. */
 function targetContract(to: string | null | undefined, cfg: RelayConfig): Target | null {
   const addr = to?.toLowerCase();
   if (!addr) return null;
@@ -96,6 +107,7 @@ function targetContract(to: string | null | undefined, cfg: RelayConfig): Target
   if (addr === cfg.arena.toLowerCase()) return 'arena';
   if (cfg.stakeVault !== undefined && addr === cfg.stakeVault.toLowerCase()) return 'vault';
   if (cfg.battle !== undefined && addr === cfg.battle.toLowerCase()) return 'battle';
+  if (cfg.battleStakeVault !== undefined && addr === cfg.battleStakeVault.toLowerCase()) return 'battleVault';
   return null;
 }
 
