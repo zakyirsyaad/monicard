@@ -12,7 +12,7 @@
 // Frame-driven ad: render(t) draws one deterministic frame at time t (seconds).
 // Scenes are laid out on a 1080 x 1920 stage. In landscape (?w=1920&h=1080) the stage is
 // cropped per scene and placed on the right, while headlines move to a left column.
-const W = 1080, H = 1920, FPS = 60, DURATION = 32;
+const W = 1080, H = 1920, FPS = 60, DURATION = 36;
 const QS = new URLSearchParams(location.search);
 const CW = Number(QS.get('w') || W), CH = Number(QS.get('h') || H), LAND = CW > CH;
 const cv = document.getElementById('c');
@@ -22,7 +22,7 @@ const ctx = cv.getContext('2d');
 // Beat grid measured from battle_music.mp3 (127.6 BPM, first beat 0.110 s).
 const BPM = 127.6, OFFSET = 0.110, BEAT = 60 / BPM;
 const B = k => OFFSET + k * BEAT;
-const SCENE = { hook: 0, draw: 8, place: 20, attack: 32, agent: 48, swarm: 56, close: 62 };
+const SCENE = { hook: 0, draw: 8, place: 20, attack: 32, agent: 48, swarm: 56, biz: 62, close: 70 };
 
 const T = { surface:'#fbfaf9', raised:'#ffffff', sunken:'#efeef2', line:'#e3e0ea', ink:'#0e100f', muted:'#5c5a66', purple:'#6e54ff', onPurple:'#ffffff', purpleInk:'#5235f0', purpleTint:'#f1efff', deep:'#200052', onDeep:'#fbfaf9', berry:'#a0055d', berryTint:'#fbe8f2', fire:'#b8400b', water:'#0b64be', lightning:'#7a5c00', common:'#84808e', rare:'#0e7c66', epic:'#200052', legendary:'#a8741a' };
 // Text on the deep background uses the dark-theme tints.
@@ -186,7 +186,12 @@ window.SFX = [
   { file: 'whoosh', t: B(55.6), gain: .65 },
   ...Array.from({ length: 10 }, (_, i) => ({ file: 'glitch', t: B(57) + i * .22, gain: .15 })),
   { file: 'whoosh', t: B(61.6), gain: .65 },
-  { file: 'logo', t: B(62), gain: 1 },
+  ...[62.75, 64.25, 65.75].map(k => ({ file: 'pop', t: B(k), gain: .55 })),
+  ...[0, 1, 2].map(i => ({ file: 'card_draw', t: B(63.25) + i * .12, gain: .4 })),
+  { file: 'score', t: B(63.9), gain: .6 },
+  { file: 'glitch', t: B(64.75), gain: .3 },
+  { file: 'whoosh', t: B(69.4), gain: .65 },
+  { file: 'logo', t: B(70), gain: 1 },
 ];
 
 // ---------- chrome ----------
@@ -645,8 +650,8 @@ function sAgent(t) {
 // ---------- S6: swarm ----------
 function sSwarm(t) {
   bg(T.surface); topBar(t);
-  headline(t, ['Many duels.', 'In parallel.'], SCENE.swarm + .25, SCENE.close, { size: 96, y: 330, total: 3 });
-  headline(t, ['300 ms blocks.'], SCENE.swarm + 1, SCENE.close, { size: 96, y: 330 + 2 * 104, color: T.purpleInk, row: 2, total: 3 });
+  headline(t, ['Many duels.', 'In parallel.'], SCENE.swarm + .25, SCENE.biz, { size: 96, y: 330, total: 3 });
+  headline(t, ['300 ms blocks.'], SCENE.swarm + 1, SCENE.biz, { size: 96, y: 330 + 2 * 104, color: T.purpleInk, row: 2, total: 3 });
   const lt = t - B(56);
   const cols = 4, rows = 5, gap = 18, tw = (W - 2 * GUTTER - gap * (cols - 1)) / cols, th = 176;
   const gy = 820;
@@ -691,16 +696,62 @@ function sSwarm(t) {
   }
 }
 
-// ---------- S7: close (deep) ----------
+// ---------- S7: business model (deep) ----------
+function sBiz(t) {
+  bg(T.deep); topBar(t, true);
+  headline(t, ['Free to start.'], SCENE.biz + .25, SCENE.close, { size: 104, y: 360, color: D.ink, total: 2 });
+  headline(t, ['Built to earn.'], SCENE.biz + .75, SCENE.close, { size: 104, y: 360 + 112, color: D.purpleInk, row: 1, total: 2 });
+  const out = inExpo(prog(t, B(69.3), B(70)));
+  const rows = [62.5, 64, 65.5], ry = [780, 1090, 1400], rh = 270, px = GUTTER, pw = W - 2 * GUTTER;
+  rows.forEach((k, i) => {
+    const p = outExpo(prog(t, B(k), B(k) + .55));
+    if (p <= 0) return;
+    ctx.save(); ctx.globalAlpha = p * (1 - out); ctx.translate((1 - p) * 140, -out * 40);
+    const y = ry[i];
+    rrect(px, y, pw, rh, 26, null, i === 2 ? 'rgba(228,223,255,.45)' : D.line, 2, i === 2 ? [12, 10] : null);
+    if (i === 0) {
+      text('PAID PACKS', px + 44, y + 64, { size: 20, color: D.muted, ls: 2.4 });
+      text('0.05 MON', px + 44, y + 150, { size: 72, weight: 600, mono: true, color: D.ink });
+      text('per pack · first pull free', px + 44, y + 210, { size: 28, weight: 400, color: D.muted });
+      // Packs fly into the onchain treasury.
+      const vx = px + pw - 250, vy = y + 50;
+      rrect(vx, vy, 206, 170, 18, null, D.lavender, 2);
+      text('TREASURY', vx + 103, vy + 132, { size: 18, color: D.lavender, ls: 2, align: 'center' });
+      text('onchain', vx + 103, vy + 156, { size: 16, weight: 500, mono: true, color: D.muted, align: 'center' });
+      for (let j = 0; j < 3; j++) rrect(vx + 34 + j * 50, vy + 34, 38, 58, 6, null, D.lavender, 2);
+      // Each pack flies along an arc into its treasury slot.
+      [0, 1, 2].forEach(j => {
+        const f = outCubic(prog(t, B(63.25) + j * .12, B(63.25) + .45 + j * .12));
+        if (f <= 0) return;
+        rrect(lerp(vx - 300, vx + 34 + j * 50, f), lerp(vy + 60, vy + 34, f) - Math.sin(f * Math.PI) * 70, 38, 58, 6, D.lavender);
+      });
+    } else if (i === 1) {
+      text('SPONSORED ARENAS', px + 44, y + 64, { size: 20, color: D.muted, ls: 2.4 });
+      text('Branded event arenas', px + 44, y + 136, { size: 50, weight: 700, color: D.ink, ls: -.8 });
+      chip('Presented by Your Brand', px + 44, y + 168, { size: 26, bg: D.ink, color: T.deep, r: 10 });
+      const st = outExpo(prog(t, B(64.75), B(65.25)));
+      ctx.save(); ctx.globalAlpha *= st;
+      text('players · duels · onchain tx', px + pw - 44, y + 64, { size: 22, weight: 500, mono: true, color: D.muted, align: 'right' });
+      ctx.restore();
+    } else {
+      chip('NEXT', px + 44, y + 36, { size: 20, bg: D.lavender, color: T.deep, r: 8, ls: 2.4 });
+      text('Prize duels', px + 44, y + 150, { size: 50, weight: 700, color: D.ink, ls: -.8 });
+      text('Winner takes the pot · 5% rake to treasury', px + 44, y + 210, { size: 28, weight: 400, color: D.muted });
+    }
+    ctx.restore();
+  });
+}
+
+// ---------- S8: close (deep) ----------
 function sClose(t) {
   bg(T.deep);
-  const t0 = B(62);
+  const t0 = B(70);
   // Three cards fan open, then flip to the three Legendaries.
-  const fan = outExpo(prog(t, B(61.9), B(62.6)));
+  const fan = outExpo(prog(t, B(69.9), B(70.6)));
   const ids = ['infernad', 'abyssnad', 'tempestnad'];
   ids.forEach((id, i) => {
     const ang = (i - 1) * .2 * fan, s = .62;
-    const flip = prog(t, B(63) + i * .1, B(63.6) + i * .1);
+    const flip = prog(t, B(71) + i * .1, B(71.6) + i * .1);
     ctx.save(); ctx.translate(W / 2 + (i - 1) * 230 * fan, 760 + Math.abs(i - 1) * 40 * fan); ctx.rotate(ang);
     ctx.scale(Math.max(.001, Math.abs(Math.cos(flip * Math.PI))), 1);
     if (flip < .5) cardBack(-150 * s, -280 * s, s);
@@ -715,9 +766,9 @@ function sClose(t) {
   });
   const wp = outExpo(prog(t, t0, t0 + .7));
   kinetic('Monicard', W / 2, 1290, { size: 190, align: 'center', color: D.ink, ls: -6, p: j => outExpo(prog(t, t0 + j * .03, t0 + .45 + j * .03)) });
-  const a1 = outExpo(prog(t, B(63), B(63.7)));
+  const a1 = outExpo(prog(t, B(71), B(71.7)));
   text('Draw. Place. Win.', W / 2, 1400 + (1 - a1) * 30, { size: 64, weight: 600, color: D.lavender, align: 'center', alpha: a1, ls: -1 });
-  const a2 = outExpo(prog(t, B(64), B(64.7)));
+  const a2 = outExpo(prog(t, B(72), B(72.7)));
   ctx.save(); ctx.globalAlpha = a2; ctx.translate(0, (1 - a2) * 24);
   chip('monicard.xyz', W / 2, 1490, { size: 40, mono: true, bg: D.ink, color: T.deep, align: 'center', r: 12 });
   text('LIVE ON MONAD TESTNET', W / 2, 1640, { size: 22, color: D.muted, ls: 3, align: 'center' });
@@ -743,13 +794,13 @@ function wipe(t, k, color, dir) {
 }
 
 // Landscape crop of the 1080 x 1920 stage per scene: [top, bottom, centered].
-const CROP = { hook: [640, 1790], draw: [470, 1760], place: [560, 1760], attack: [180, 1725, false, { x: 760, y: 120, w: 1100, h: 940 }], agent: [740, 1720], swarm: [590, 1800], close: [540, 1700, true] };
+const CROP = { hook: [640, 1790], draw: [470, 1760], place: [560, 1760], attack: [180, 1725, false, { x: 760, y: 120, w: 1100, h: 940 }], agent: [740, 1720], swarm: [590, 1800], biz: [740, 1710], close: [540, 1700, true] };
 const STAGE_BOX = { x: 860, y: 150, w: 1000, h: 890 };
 function render(t) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   const [name, fn] = t < B(SCENE.draw) ? ['hook', sHook] : t < B(SCENE.place) ? ['draw', sDraw] : t < B(SCENE.attack) ? ['place', sPlace]
-    : t < B(SCENE.agent) ? ['attack', sAttack] : t < B(SCENE.swarm) ? ['agent', sAgent] : t < B(SCENE.close) ? ['swarm', sSwarm] : ['close', sClose];
+    : t < B(SCENE.agent) ? ['attack', sAttack] : t < B(SCENE.swarm) ? ['agent', sAgent] : t < B(SCENE.biz) ? ['swarm', sSwarm] : t < B(SCENE.close) ? ['biz', sBiz] : ['close', sClose];
   overlay = [];
   if (LAND) {
     const [y0, y1, centered, ownBox] = CROP[name];
@@ -763,7 +814,7 @@ function render(t) {
     overlay.forEach(f => f());
   } else fn(t);
   // Cover each hard cut: panels in before the cut, out after it.
-  [[SCENE.agent, T.deep], [SCENE.swarm, T.surface], [SCENE.close, T.deep]].forEach(([k, c]) => wipe(t, k, c, t < B(k) ? 'in' : 'out'));
+  [[SCENE.agent, T.deep], [SCENE.swarm, T.surface], [SCENE.biz, T.deep]].forEach(([k, c]) => wipe(t, k, c, t < B(k) ? 'in' : 'out'));
 }
 window.render = render;
 window.ready = (async () => {

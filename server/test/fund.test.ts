@@ -100,7 +100,8 @@ describe('createFundLimiter', () => {
 
   test('stops when budget exhausted', () => {
     const l = makeLimiter({ maxPerIpPer10Min: 1000 });
-    for (let i = 0; i < 10; i++) {
+    // budget 3 MON / FUND_AMOUNT_WEI 0.15 MON = 20 players
+    for (let i = 0; i < 20; i++) {
       const r = l.reserve({ address: ADDR(i + 1), ip: `ip${i}`, balanceWei: 0n, now: T0 + i });
       expect(r).toMatchObject({ fund: true });
       if (r.fund) r.confirm(CONFIRMED_LONG_AGO);

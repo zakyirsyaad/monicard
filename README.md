@@ -38,6 +38,7 @@ A match is roughly 15 to 25 transactions at about 0.01 MON each.
 | Contract | Role | Monad Testnet (10143) |
 |---|---|---|
 | `CardBattle` | Card Battle: onchain draws, hand, board, best of 3 | [`0x68B4759FaA160907327a6eB40dAe0A4094A90242`](https://testnet.monadscan.com/address/0x68B4759FaA160907327a6eB40dAe0A4094A90242#code) |
+| `BattleStakeVault` | Staked Card Battle: both players stake, winner takes the pot minus a 5% rake | [`0xF33d88f0D06bf16EA254f0067c272Fa328125E9e`](https://testnet.monadscan.com/address/0xF33d88f0D06bf16EA254f0067c272Fa328125E9e#code) |
 | `NadCards` | ERC-721 collection, free and paid pulls, 5% royalty (ERC-2981) | [`0x7AF33CB3823Ff99D37411A678452A7980d14CF9F`](https://testnet.monadscan.com/address/0x7AF33CB3823Ff99D37411A678452A7980d14CF9F#code) |
 | `BlitzArena` | Tap Blitz: parallel real-time duels | [`0xc08c323df6a5f9fAbaF75A6060E4CA357F2251f9`](https://testnet.monadscan.com/address/0xc08c323df6a5f9fAbaF75A6060E4CA357F2251f9#code) |
 | `StakeVault` | Staked Tap Blitz duels with a 5% treasury rake | [`0x642C1364b62344128087549ceeD9268D5E3385df`](https://testnet.monadscan.com/address/0x642C1364b62344128087549ceeD9268D5E3385df#code) |
@@ -96,7 +97,7 @@ Repo layout: `contracts/` (Foundry), `shared/` (game formulas + ABIs), `server/`
 | Event mode (B2B) | Organisers pay for a branded arena; the relay subsidises players' gas. Card Battle itself is free to play and acts as the funnel | Live (`/arena`) |
 | Paid packs | First pull free, then 0.05 MON per pack, odds shown and rolled onchain; funds go to the contract treasury (`paidPull` / `withdraw`) | Live |
 | Marketplace royalty | 5% on every resale (ERC-2981) | Live (in the contract) |
-| Staked duels | Both players stake MON, the winner takes the pot minus a 5% rake to the treasury | Live in Tap Blitz (`StakeVault`); Card Battle staking is next |
+| Staked duels | Both players stake MON, the winner takes the pot minus a 5% rake to the treasury | Live in Card Battle (`BattleStakeVault`) and Tap Blitz (`StakeVault`) |
 | Season pass and cosmetics | Players | Roadmap |
 
 Unit cost: one Card Battle action costs about 101,000 gas, roughly 0.01 MON at 102 gwei, so a full match is about 0.2 MON in gas across both players. In event mode the organiser's package funds that gas through the relay; packs and stake rake are upside on top.
@@ -116,7 +117,7 @@ Unit cost: one Card Battle action costs about 101,000 gas, roughly 0.01 MON at 1
 
 ## Roadmap
 
-Staked Card Battle, sponsor-funded tournament escrow, verifiable randomness (VRF), embedded-wallet login, ERC-8004 identity for the AI Agent, a native card marketplace, and a learning loop for the Card Battle agent.
+Sponsor-funded tournament escrow, verifiable randomness (VRF), embedded-wallet login, ERC-8004 identity for the AI Agent, a native card marketplace, and a learning loop for the Card Battle agent.
 
 ## License
 

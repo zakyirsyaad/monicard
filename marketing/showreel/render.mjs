@@ -15,7 +15,7 @@ const nadDir = path.join(here, '../../docs/design-system/assets/Nadmon');
 const svgs = Object.fromEntries(readdirSync(nadDir).filter(f => f.endsWith('.svg')).map(f => [f.replace('.svg', ''), readFileSync(path.join(nadDir, f), 'utf8')]));
 const SCENE = process.env.SCENE || 'battle.html';
 const WIDTH = Number(process.env.WIDTH || 1080), HEIGHT = Number(process.env.HEIGHT || 1920);
-const FPS = 60, FRAMES = Number(process.env.SECONDS || 32) * FPS, WORKERS = 4;
+const FPS = 60, FRAMES = Number(process.env.SECONDS || 36) * FPS, WORKERS = 4;
 
 async function openPage(browser) {
   const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT } });

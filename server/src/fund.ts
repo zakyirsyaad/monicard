@@ -2,8 +2,8 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { isAddress, parseEther, type Hex, type TransactionReceipt } from 'viem';
 
-export const FUND_AMOUNT_WEI = parseEther('0.3');
-export const FUND_THRESHOLD_WEI = parseEther('0.1');
+export const FUND_AMOUNT_WEI = parseEther('0.15');
+export const FUND_THRESHOLD_WEI = parseEther('0.05');
 export const FUND_BUDGET_WEI_DEFAULT = parseEther('3');
 export const MAX_PER_ADDRESS = 3;
 export const MAX_PER_IP_PER_10_MIN = 10;

@@ -3,7 +3,7 @@ Env: MUSIC, SECONDS, OUT."""
 import json, os, subprocess
 
 MUSIC = os.environ.get("MUSIC", "audio/battle_music.mp3")
-SECONDS = float(os.environ.get("SECONDS", "32"))
+SECONDS = float(os.environ.get("SECONDS", "36"))
 OUT = os.environ.get("OUT", "monicard-battle-ad-1080x1920-60fps.mp4")
 
 events = json.load(open("sfx.json"))
