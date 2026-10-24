@@ -6,16 +6,22 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "test": "vitest run",
-    "e2e": "tsx scripts/e2e.ts"
+    "e2e": "tsx scripts/e2e.ts",
+    "fund": "tsx scripts/fund.ts",
+    "train": "tsx scripts/train.ts"
   },
   "dependencies": {
+    "@hono/node-server": "^1",
     "@nad/shared": "workspace:*",
     "hono": "^4",
     "tsx": "^4.23.15",
     "viem": "^2.57.10",
+    "ws": "^8",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/node": "^22",
+    "@types/ws": "^8",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9"
   }
