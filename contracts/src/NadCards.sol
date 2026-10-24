@@ -36,7 +36,7 @@ contract NadCards is ERC721, ERC2981, Ownable {
     /// @notice Address allowed to record duel results.
     address public arena;
 
-    mapping(uint256 => Card) private _cards;
+    mapping(uint256 => Card) internal _cards;
     uint256 private _nextId;
     string private _baseUri;
 
