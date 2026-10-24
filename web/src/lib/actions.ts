@@ -2,7 +2,7 @@ import { encodeFunctionData } from 'viem';
 import type { Hex } from 'viem';
 import type { PrivateKeyAccount } from 'viem/accounts';
 import { blitzArenaAbi, nadCardsAbi } from './abi';
-import { ApiError, TimeoutError } from './api';
+import { ApiError, TimeoutError, isTransient } from './api';
 import { signCall } from './sign';
 import type { Account, Api, Config, FundReason, RelayResult } from './types';
 
@@ -90,22 +90,37 @@ export async function waitForTxGap({ now, sleep = defaultSleep }: Pick<ActionDep
   if (gap > 0) await sleep(gap);
 }
 
+const READ_TRIES = 3;
+const READ_RETRY_MS = 600;
+
+/** Retries a request the server answered with a transient failure (429/5xx) or never completed. Safe for reads and /fund. */
+export async function retryTransient<T>(run: () => Promise<T>, sleep: (ms: number) => Promise<void> = defaultSleep): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run();
+    } catch (err) {
+      if (!isTransient(err) || attempt >= READ_TRIES) throw err;
+      await sleep(READ_RETRY_MS);
+    }
+  }
+}
+
 /** Tops the burner up when its balance is under `minWei`. Returns the fresh account. */
 export async function ensureFunds(
   { api, sleep = defaultSleep }: FundDeps,
   address: Hex,
   minWei: bigint = MIN_FUND_WEI,
 ): Promise<Account> {
-  const account = await api.getAccount(address);
+  const account = await retryTransient(() => api.getAccount(address), sleep);
   if (BigInt(account.balance) >= minWei) return account;
 
-  const result = await api.fund(address);
+  const result = await retryTransient(() => api.fund(address), sleep);
   if (result.funded) {
     await sleep(FUND_SETTLE_MS);
   } else if (result.reason !== 'balance_ok') {
     throw new FundError(result.reason ?? 'disabled');
   }
-  return api.getAccount(address);
+  return retryTransient(() => api.getAccount(address), sleep);
 }
 
 export type CallParams = { fn: string; to: Hex; data: Hex; gas: number; value?: bigint };

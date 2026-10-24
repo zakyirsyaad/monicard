@@ -1,5 +1,5 @@
 import { FundError, MaybeLandedError } from './actions';
-import { ApiError, NetworkError, TimeoutError } from './api';
+import { ApiError, NetworkError, TimeoutError, isTransient } from './api';
 import { InsufficientFundsError } from './flows';
 import { StakeFundsError } from './stakeFlows';
 import type { DuelStatus } from './types';
@@ -91,6 +91,7 @@ export function toFriendly(err: unknown, ctx: ErrorContext): string {
   if (err instanceof StakeFundsError) return 'Not enough test MON to stake.';
   if (err instanceof InsufficientFundsError) return 'Not enough test MON for another pull.';
   if (err instanceof NetworkError || err instanceof TimeoutError) return friendlyError({ kind: 'network' });
+  if (err instanceof ApiError && err.status >= 500 && isTransient(err)) return friendlyError({ kind: 'network' });
   if (err instanceof ApiError) return friendlyError({ kind: 'relay', reason: err.reason });
   return GENERIC_REVERT;
 }

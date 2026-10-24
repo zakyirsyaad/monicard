@@ -49,6 +49,11 @@ describe('friendlyError', () => {
     expect(friendlyError({ kind: 'reverted', fn: 'joinDuel' })).toBe("That didn't go through. Try again.");
   });
 
+  it('treats a server 5xx as a busy network, not a rejection', () => {
+    expect(toFriendly(new ApiError(503, 'rpc'), { fn: 'freePull' })).toBe('Network is busy. Trying again.');
+    expect(toFriendly(new ApiError(502, 'http_502'), { fn: 'freePull' })).toBe('Network is busy. Trying again.');
+  });
+
   it('maps relay rejections', () => {
     expect(friendlyError({ kind: 'relay', reason: 'balance' })).toBe('Not enough test MON.');
     expect(friendlyError({ kind: 'relay', reason: 'rate_limit' })).toBe('Too many requests. Wait a moment.');

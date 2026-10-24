@@ -90,6 +90,38 @@ describe('ensureFunds', () => {
     expect(fresh.balance).toBe((MIN_FUND_WEI * 3n).toString());
   });
 
+  it('retries a transient 503 on the account read and a 502 on /fund', async () => {
+    const getAccount = vi
+      .fn<Api['getAccount']>()
+      .mockRejectedValueOnce(new ApiError(503, 'rpc'))
+      .mockResolvedValueOnce(acct(0n))
+      .mockResolvedValueOnce(acct(MIN_FUND_WEI * 3n));
+    const fund = vi
+      .fn<Api['fund']>()
+      .mockRejectedValueOnce(new ApiError(502, 'http_502'))
+      .mockResolvedValueOnce({ funded: true });
+    const sleep = vi.fn(() => Promise.resolve());
+
+    const fresh = await ensureFunds({ api: makeApi({ getAccount, fund }), sleep }, account.address);
+
+    expect(fund).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(600);
+    expect(fresh.balance).toBe((MIN_FUND_WEI * 3n).toString());
+  });
+
+  it('gives up after three transient failures and keeps the error', async () => {
+    const getAccount = vi.fn<Api['getAccount']>().mockRejectedValue(new ApiError(503, 'rpc'));
+    const sleep = vi.fn(() => Promise.resolve());
+    await expect(ensureFunds({ api: makeApi({ getAccount }), sleep }, account.address)).rejects.toBeInstanceOf(ApiError);
+    expect(getAccount).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry a permanent 4xx', async () => {
+    const getAccount = vi.fn<Api['getAccount']>().mockRejectedValue(new ApiError(400, 'bad_address'));
+    await expect(ensureFunds({ api: makeApi({ getAccount }), sleep: vi.fn(() => Promise.resolve()) }, account.address)).rejects.toBeInstanceOf(ApiError);
+    expect(getAccount).toHaveBeenCalledTimes(1);
+  });
+
   it('does not fund when the balance is enough', async () => {
     const fund = vi.fn(() => Promise.resolve({ funded: true }));
     const sleep = vi.fn(() => Promise.resolve());
