@@ -1,4 +1,5 @@
 import type { Hex } from 'viem';
+import type { DuelStatus, DuelView } from '@nad/shared';
 
 // Frozen interface contract (HTTP API + WebSocket). Do not add fields.
 
@@ -80,32 +81,8 @@ export type AgentChallengeResult =
   | { ok: true }
   | { ok: false; reason: 'busy' | 'reserved' | 'not_open' | 'stale' | 'limit_ip' };
 
-// DuelView/DuelStatus will become re-exports from `@nad/shared` once Task 4 lands (keep the shape identical).
-export type DuelStatus = 'Open' | 'Active' | 'P1Won' | 'P2Won' | 'Draw';
-
-export type DuelView = {
-  id: string;
-  p1: Hex;
-  p2: Hex;
-  hp1: number;
-  hp2: number;
-  atk1: number;
-  atk2: number;
-  mult1: number;
-  mult2: number;
-  lastBlock1: number;
-  lastBlock2: number;
-  skill1: boolean;
-  skill2: boolean;
-  status: DuelStatus;
-  startBlock: number;
-  endBlock: number;
-  card1: number;
-  card2: number;
-  maxHp1: number;
-  maxHp2: number;
-  settled: boolean;
-};
+// DuelView/DuelStatus are owned by @nad/shared (frozen contract shape).
+export type { DuelStatus, DuelView };
 
 export type LeaderboardEntry = {
   address: Hex;
