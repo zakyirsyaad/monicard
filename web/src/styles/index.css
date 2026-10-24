@@ -18,3 +18,35 @@ body {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+
+/* Legendary foil: the single allowed gradient in the design system. */
+.foil {
+  background-image: repeating-linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0) 0,
+    rgba(255, 255, 255, 0) 14px,
+    rgba(255, 255, 255, 0.35) 14px,
+    rgba(255, 255, 255, 0.35) 16px,
+    rgba(255, 255, 255, 0) 16px,
+    rgba(255, 255, 255, 0) 30px
+  );
+  background-size: 300% 300%;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  animation: foil-shift 6s linear infinite;
+}
+
+@keyframes foil-shift {
+  from {
+    background-position: 0% 0%;
+  }
+  to {
+    background-position: 100% 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .foil {
+    animation: none;
+  }
+}

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="560" viewBox="0 0 300 560">
+  <rect x="1.5" y="1.5" width="297" height="557" rx="14" fill="#ffffff" stroke="#200052" stroke-width="3"/>
+  <rect x="12" y="88" width="276" height="172" rx="8" fill="#efeef2" stroke="#e3e0ea" stroke-width="2"/>
+  <text x="150" y="178" text-anchor="middle" font-family="Schibsted Grotesk, Helvetica Neue, Arial, sans-serif" font-size="15" font-weight="600" fill="#5c5a66">Card preview</text>
+  <text x="150" y="548" text-anchor="middle" font-family="JetBrains Mono, Menlo, monospace" font-size="10" fill="#5c5a66">Mock</text>
+</svg>

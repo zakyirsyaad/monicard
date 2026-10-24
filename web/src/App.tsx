@@ -1,4 +1,5 @@
 import { Route, Routes } from 'react-router-dom';
+import { Dev } from './routes/Dev';
 
 function Placeholder({ name }: { name: string }) {
   return (
@@ -16,7 +17,7 @@ export function App() {
       <Route path="/play" element={<Placeholder name="Play" />} />
       <Route path="/duel/:id" element={<Placeholder name="Duel" />} />
       <Route path="/arena" element={<Placeholder name="Arena" />} />
-      <Route path="/dev" element={<Placeholder name="Dev" />} />
+      <Route path="/dev" element={<Dev />} />
       <Route path="*" element={<Placeholder name="Not found" />} />
     </Routes>
   );
